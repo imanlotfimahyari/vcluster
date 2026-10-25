@@ -103,6 +103,10 @@ func InitAndValidateConfig(ctx context.Context, vConfig *config.VirtualClusterCo
 		return err
 	}
 
+	if err := EnsureStorageLayout(ctx, vConfig); err != nil {
+		return fmt.Errorf("validate persistent storage layout: %w", err)
+	}
+
 	if err := EnsureBackingStoreChanges(
 		ctx,
 		vConfig.HostClient,
