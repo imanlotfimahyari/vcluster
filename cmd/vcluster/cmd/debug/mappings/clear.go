@@ -38,6 +38,11 @@ func ExecuteClear(ctx context.Context, options *ClearOptions) error {
 		return err
 	}
 
+	layout, err := vConfig.ResolveEtcdStorageLayout()
+	if err != nil {
+		return err
+	}
+
 	// create new etcd client
 	etcdClient, err := etcd.NewFromConfig(ctx, vConfig)
 	if err != nil {
@@ -45,7 +50,7 @@ func ExecuteClear(ctx context.Context, options *ClearOptions) error {
 	}
 
 	// create new etcd backend & list mappings
-	etcdBackend := store.NewEtcdBackend(etcdClient)
+	etcdBackend := store.NewEtcdBackend(etcdClient, layout.MappingsPrefix)
 	mappings, err := etcdBackend.List(ctx)
 	if err != nil {
 		return fmt.Errorf("list mappings: %w", err)

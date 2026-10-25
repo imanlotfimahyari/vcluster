@@ -106,6 +106,11 @@ func parseMappingAndClient(ctx context.Context, configPath, kind, apiVersion, vi
 		return synccontext.NameMapping{}, nil, err
 	}
 
+	layout, err := vConfig.ResolveEtcdStorageLayout()
+	if err != nil {
+		return synccontext.NameMapping{}, nil, err
+	}
+
 	// create new etcd client
 	etcdClient, err := etcd.NewFromConfig(ctx, vConfig)
 	if err != nil {
@@ -113,6 +118,6 @@ func parseMappingAndClient(ctx context.Context, configPath, kind, apiVersion, vi
 	}
 
 	// create new etcd backend & list mappings
-	etcdBackend := store.NewEtcdBackend(etcdClient)
+	etcdBackend := store.NewEtcdBackend(etcdClient, layout.MappingsPrefix)
 	return nameMapping, etcdBackend, nil
 }
