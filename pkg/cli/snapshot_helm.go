@@ -38,6 +38,10 @@ func CreateSnapshot(ctx context.Context, args []string, globalFlags *flags.Globa
 		return err
 	}
 
+	if err := validateSnapshotStorageLayout(ctx, vCluster, kubeClient); err != nil {
+		return err
+	}
+
 	if !vCluster.IsStandalone {
 		// Standalone is not Helm-deployed; no release metadata to include in the snapshot.
 
@@ -249,6 +253,15 @@ func checkIfVClusterSupportsSnapshotRequests(vCluster *find.VCluster, log log.Lo
 		}
 	}
 	return nil
+}
+
+func validateSnapshotStorageLayout(ctx context.Context, vCluster *find.VCluster, kubeClient *kubernetes.Clientset) error {
+	// Do not use archive-supplied release values for the destination guard.
+	vConfig, err := getVClusterConfig(ctx, vCluster, kubeClient, &snapshotapi.Options{})
+	if err != nil {
+		return err
+	}
+	return vConfig.ValidateSnapshotStorageLayout()
 }
 
 func getVClusterConfig(ctx context.Context, vCluster *find.VCluster, kubeClient *kubernetes.Clientset, snapshotOpts *snapshotapi.Options) (*vclusterconfig.VirtualClusterConfig, error) {

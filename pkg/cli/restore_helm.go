@@ -43,6 +43,12 @@ func Restore(ctx context.Context, args []string, globalFlags *flags.GlobalFlags,
 }
 
 func restoreVCluster(ctx context.Context, kubeClient *kubernetes.Clientset, restConfig *rest.Config, vCluster *find.VCluster, snapshotOpts *snapshotapi.Options, podOptions *pod.Options, newVCluster bool, log log.Logger) error {
+	// Read the destination's live config, not the source archive's release
+	// values. Reject unsupported layouts before pausing a running vCluster.
+	if err := validateSnapshotStorageLayout(ctx, vCluster, kubeClient); err != nil {
+		return err
+	}
+
 	cmdArgs := []string{"restore"}
 	if newVCluster {
 		cmdArgs = append(cmdArgs, "--new-vcluster")
