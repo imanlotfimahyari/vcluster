@@ -1079,6 +1079,9 @@ func (c *Config) IsConfiguredForAutoDeletion() bool {
 
 // ValidateChanges checks for disallowed config changes.
 func ValidateChanges(oldCfg, newCfg *Config) error {
+	if err := validateStorePrefixChange(oldCfg, newCfg); err != nil {
+		return err
+	}
 	if err := ValidateStoreChanges(newCfg.BackingStoreType(), oldCfg.BackingStoreType()); err != nil {
 		return err
 	}
@@ -2351,6 +2354,13 @@ func (e Etcd) JSONSchemaExtend(base *jsonschema.Schema) {
 type EtcdExternal struct {
 	// Enabled defines if the external etcd should be used.
 	Enabled bool `json:"enabled,omitempty"`
+
+	// StorePrefix is an opt-in tenant root for external etcd. Kubernetes objects
+	// are stored below storePrefix/registry and mappings below storePrefix/mappings/.
+	// Empty preserves the existing storage layout. Configure only on new deployments;
+	// changing it requires an offline migration. Built-in snapshot and restore are
+	// not supported with this setting yet. Requires the managed K8s API server.
+	StorePrefix string `json:"storePrefix,omitempty"`
 
 	// Endpoint holds the endpoint of the external etcd server, e.g. my-example-service:2379
 	Endpoint string `json:"endpoint,omitempty"`

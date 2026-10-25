@@ -188,6 +188,7 @@ controlPlane:
       external:
         enabled: false
         endpoint: ""
+        storePrefix: ""
         tls:
           caFile: ""
           certFile: ""
