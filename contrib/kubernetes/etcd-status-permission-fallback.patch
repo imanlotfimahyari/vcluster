@@ -1,0 +1,79 @@
+diff --git a/staging/src/k8s.io/apiserver/pkg/storage/feature/feature_support_checker.go b/staging/src/k8s.io/apiserver/pkg/storage/feature/feature_support_checker.go
+index e664d22a..3fedef16 100644
+--- a/staging/src/k8s.io/apiserver/pkg/storage/feature/feature_support_checker.go
++++ b/staging/src/k8s.io/apiserver/pkg/storage/feature/feature_support_checker.go
+@@ -18,11 +18,15 @@ package feature
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"sync"
+ 	"time"
+ 
++	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
+ 	clientv3 "go.etcd.io/etcd/client/v3"
++	"google.golang.org/grpc/codes"
++	"google.golang.org/grpc/status"
+ 	"k8s.io/apimachinery/pkg/util/runtime"
+ 	"k8s.io/apimachinery/pkg/util/version"
+ 	"k8s.io/apimachinery/pkg/util/wait"
+@@ -124,7 +128,15 @@ func (f *defaultFeatureSupportChecker) checkClient(ctx context.Context, c client
+ func (f *defaultFeatureSupportChecker) clientSupportsRequestWatchProgress(ctx context.Context, c client, ep string) error {
+ 	supported, err := endpointSupportsRequestWatchProgress(ctx, c, ep)
+ 	if err != nil {
+-		return err
++		if status.Code(err) != codes.PermissionDenied && !errors.Is(err, rpctypes.ErrPermissionDenied) {
++			return err
++		}
++		// Status is an administrator operation in authenticated etcd. A client
++		// restricted to a Kubernetes key range can still serve ordinary storage
++		// requests. Treat an unavailable capability check conservatively instead
++		// of retrying an authorization failure forever or requiring broader access.
++		klog.InfoS("etcd Status is not authorized; disabling RequestWatchProgress optimization", "endpoint", ep)
++		supported = false
+ 	}
+ 	f.lock.Lock()
+ 	defer f.lock.Unlock()
+diff --git a/staging/src/k8s.io/apiserver/pkg/storage/feature/feature_support_checker_test.go b/staging/src/k8s.io/apiserver/pkg/storage/feature/feature_support_checker_test.go
+index 2e4260e8..71fd9256 100644
+--- a/staging/src/k8s.io/apiserver/pkg/storage/feature/feature_support_checker_test.go
++++ b/staging/src/k8s.io/apiserver/pkg/storage/feature/feature_support_checker_test.go
+@@ -22,7 +22,10 @@ import (
+ 	"testing"
+ 
+ 	"github.com/stretchr/testify/assert"
++	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
+ 	clientv3 "go.etcd.io/etcd/client/v3"
++	"google.golang.org/grpc/codes"
++	"google.golang.org/grpc/status"
+ 	"k8s.io/apiserver/pkg/storage"
+ )
+ 
+@@ -267,3 +270,26 @@ func TestSupportsRequestWatchProgress(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestStatusPermissionDeniedDisablesOptimizationWithoutRetry(t *testing.T) {
++	for _, denial := range []error{rpctypes.ErrPermissionDenied, status.Error(codes.PermissionDenied, "etcdserver: permission denied"), fmt.Errorf("wrapped: %w", rpctypes.ErrPermissionDenied)} {
++		checker := newDefaultFeatureSupportChecker()
++		checker.progressNotifySupported = new(bool)
++		*checker.progressNotifySupported = true
++		mock := &MockEtcdClient{EndpointVersion: []mockEndpointVersion{{Endpoint: "test", Error: denial}}}
++		if err := checker.clientSupportsRequestWatchProgress(context.Background(), mock, "test"); err != nil {
++			t.Fatalf("authorization failure would be retried: %v", err)
++		}
++		if checker.Supports(storage.RequestWatchProgress) {
++			t.Fatal("unverified capability was enabled")
++		}
++	}
++}
++
++func TestStatusTransientFailureStillRetries(t *testing.T) {
++	checker := newDefaultFeatureSupportChecker()
++	mock := &MockEtcdClient{EndpointVersion: []mockEndpointVersion{{Endpoint: "test", Error: status.Error(codes.Unavailable, "transient")}}}
++	if err := checker.clientSupportsRequestWatchProgress(context.Background(), mock, "test"); err == nil {
++		t.Fatal("transient failure was treated as a terminal capability decision")
++	}
++}
