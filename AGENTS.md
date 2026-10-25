@@ -12,10 +12,16 @@ After a meaningful implementation step, complete the relevant checks, update
 verify the remote head/tree. Preserve concurrent remote commits. Do not publish
 credentials or test artifacts containing generated private keys.
 
-GitHub rejected branch creation with HTTP 403 `Resource not accessible by
-integration`, including a retry after synchronization. The fork's `main` was
-subsequently verified at the tested upstream revision
-`e702d7ba743bd03d9c572cc0d3807def27779317`; the feature branch remained absent.
-Until repository write access is available, retain local commits and downloadable
-source checkpoints and report that publication remains blocked. Do not claim a
-successful remote backup of the implementation.
+The fork's `main` was verified at the tested upstream revision
+`e702d7ba743bd03d9c572cc0d3807def27779317`. GitHub API writes still return HTTP
+403 `Resource not accessible by integration`, and shell Git has no push
+credentials. The user approved publishing through the signed-in GitHub browser;
+that route successfully created the feature branch and uploaded source files.
+Use that approved fallback when needed, preserving paths and verifying the
+remote Git tree after upload. Browser commits have different IDs from the local
+implementation commits; exact tree equality verifies the source checkpoint.
+
+The two harness entry points are stored as ordinary files for browser-upload
+compatibility. Invoke `bash hack/test-shared-etcd.sh` and
+`python hack/run-shared-etcd-vm.py` explicitly. Preserve local commits and
+downloadable source checkpoints as additional copies.
