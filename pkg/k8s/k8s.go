@@ -29,6 +29,11 @@ const (
 )
 
 func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualClusterConfig) error {
+	layout, err := vConfig.ResolveEtcdStorageLayout()
+	if err != nil {
+		return err
+	}
+
 	// start the backing store
 	etcdEndpoints, etcdCertificates, err := StartBackingStore(ctx, vConfig)
 	if err != nil {
@@ -107,6 +112,7 @@ func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualCl
 			}
 
 			// add extra args
+			args = append(args, layout.APIServerArgs()...)
 			args = command.MergeArgs(args, apiServer.ExtraArgs)
 
 			// wait until etcd is up and running
