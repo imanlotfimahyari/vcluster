@@ -6,11 +6,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/loft-sh/vcluster/pkg/constants"
 	"github.com/loft-sh/vcluster/pkg/scheme"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
@@ -47,6 +50,12 @@ func (o *BidirectionalObjectCache) Start(ctx *RegisterContext) error {
 	gvk, err := apiutil.GVKForObject(o.obj, scheme.Scheme)
 	if err != nil {
 		return fmt.Errorf("gvk for object: %w", err)
+	}
+
+	if ctx.Config.ControlPlane.BackingStore.Etcd.External.StorePrefix != "" {
+		if err := o.initializeBaseline(ctx); err != nil {
+			return err
+		}
 	}
 
 	go func() {
@@ -153,4 +162,46 @@ func (o *ObjectCache) Get(key types.NamespacedName) (client.Object, bool) {
 
 	var d client.Object
 	return d, false
+}
+
+// initializeBaseline attaches to the same real informers used by reconciliation.
+// Seed only once: advancing baselines on later informer events would mark an
+// unsynchronized user update as already delivered to the other cluster.
+func (o *BidirectionalObjectCache) initializeBaseline(ctx *RegisterContext) error {
+	warmCtx, cancel := context.WithTimeout(ctx, constants.DefaultCacheSyncTimeout)
+	defer cancel()
+	for _, side := range []struct {
+		source ctrlcache.Cache
+		target *ObjectCache
+	}{
+		{ctx.VirtualManager.GetCache(), o.vCache}, {ctx.HostManager.GetCache(), o.pCache},
+	} {
+		informer, err := side.source.GetInformer(warmCtx, o.obj)
+		if err != nil {
+			return fmt.Errorf("initialize bidirectional cache informer: %w", err)
+		}
+		registration, err := informer.AddEventHandler(side.target.baselineHandler())
+		if err != nil {
+			return fmt.Errorf("initialize bidirectional cache handler: %w", err)
+		}
+		if !toolscache.WaitForCacheSync(warmCtx.Done(), registration.HasSynced) {
+			return fmt.Errorf("bidirectional cache initial events did not synchronize")
+		}
+	}
+	return nil
+}
+
+func (o *ObjectCache) seed(obj interface{}) {
+	value, ok := obj.(client.Object)
+	if !ok || value == nil {
+		return
+	}
+	o.cache.LoadOrStore(client.ObjectKeyFromObject(value), value.DeepCopyObject().(client.Object))
+}
+
+func (o *ObjectCache) baselineHandler() toolscache.ResourceEventHandler {
+	return toolscache.ResourceEventHandlerFuncs{
+		AddFunc:    o.seed,
+		UpdateFunc: func(oldObj, _ interface{}) { o.seed(oldObj) },
+	}
 }
