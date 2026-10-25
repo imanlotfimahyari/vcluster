@@ -42,6 +42,10 @@ var (
 )
 
 func ValidateConfigAndSetDefaults(vConfig *VirtualClusterConfig) error {
+	if _, err := vConfig.ResolveEtcdStorageLayout(); err != nil {
+		return err
+	}
+
 	// check the value of pod security standard
 	if vConfig.Policies.PodSecurityStandard != "" && !allowedPodSecurityStandards[vConfig.Policies.PodSecurityStandard] {
 		return fmt.Errorf("invalid argument enforce-pod-security-standard=%s, must be one of: privileged, baseline, restricted", vConfig.Policies.PodSecurityStandard)
