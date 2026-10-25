@@ -412,6 +412,12 @@ controlPlane:
         enabled: false
         # Endpoint holds the endpoint of the external etcd server, e.g. my-example-service:2379
         endpoint: ""
+        # StorePrefix is an opt-in tenant root for external etcd. Kubernetes objects
+        # are stored below storePrefix/registry and mappings below storePrefix/mappings/.
+        # Empty preserves the existing storage layout. Configure only on new deployments;
+        # changing it requires an offline migration. Built-in snapshot and restore are
+        # not supported with this setting yet. Requires the managed K8s API server.
+        storePrefix: ""
         # TLS defines the tls configuration for the external etcd server
         tls:
           # CaFile is the path to the ca file
