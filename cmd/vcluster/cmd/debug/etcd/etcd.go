@@ -16,5 +16,6 @@ func NewEtcdCmd() *cobra.Command {
 	}
 
 	debugCmd.AddCommand(NewKeysCommand())
+	debugCmd.AddCommand(NewTenantArchiveCommands()...)
 	return debugCmd
 }
