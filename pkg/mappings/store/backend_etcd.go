@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 
+	vclusterconfig "github.com/loft-sh/vcluster/config"
 	"github.com/loft-sh/vcluster/pkg/etcd"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	corev1 "k8s.io/api/core/v1"
@@ -15,20 +16,24 @@ import (
 	"k8s.io/klog/v2"
 )
 
-var MappingsPrefix = "/vcluster/mappings/"
+// MappingsPrefix is the legacy mappings path used by existing archives.
+const MappingsPrefix = vclusterconfig.DefaultMappingsPrefix
 
-func NewEtcdBackend(etcdClient etcd.Client) Backend {
+// NewEtcdBackend uses the mappings prefix from a validated storage layout.
+func NewEtcdBackend(etcdClient etcd.Client, mappingsPrefix string) Backend {
 	return &etcdBackend{
-		etcdClient: etcdClient,
+		etcdClient:     etcdClient,
+		mappingsPrefix: mappingsPrefix,
 	}
 }
 
 type etcdBackend struct {
-	etcdClient etcd.Client
+	etcdClient     etcd.Client
+	mappingsPrefix string
 }
 
 func (m *etcdBackend) List(ctx context.Context) ([]*Mapping, error) {
-	mappings, err := m.etcdClient.List(ctx, MappingsPrefix)
+	mappings, err := m.etcdClient.List(ctx, m.mappingsPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("etcd backend: list mappings: %w", err)
 	}
@@ -49,7 +54,7 @@ func (m *etcdBackend) List(ctx context.Context) ([]*Mapping, error) {
 
 func (m *etcdBackend) Watch(ctx context.Context) <-chan BackendWatchResponse {
 	responseChan := make(chan BackendWatchResponse)
-	watchChan := m.etcdClient.Watch(ctx, MappingsPrefix)
+	watchChan := m.etcdClient.Watch(ctx, m.mappingsPrefix)
 	go func() {
 		defer close(responseChan)
 
@@ -94,7 +99,7 @@ func (m *etcdBackend) Watch(ctx context.Context) <-chan BackendWatchResponse {
 						if eventType == BackendWatchEventTypeDelete {
 							retEvents = append(retEvents, &BackendWatchEvent{
 								Type:    BackendWatchEventTypeDeleteReconstructed,
-								Mapping: reconstructNameMappingFromKey(string(singleEvent.Kv.Key)),
+								Mapping: m.reconstructNameMappingFromKey(string(singleEvent.Kv.Key)),
 							})
 						}
 
@@ -123,17 +128,25 @@ func (m *etcdBackend) Save(ctx context.Context, mapping *Mapping) error {
 		return err
 	}
 
-	_, err = m.etcdClient.Put(ctx, mappingToKey(mapping), mappingBytes)
+	key, err := m.mappingToKey(mapping)
+	if err != nil {
+		return err
+	}
+	_, err = m.etcdClient.Put(ctx, key, mappingBytes)
 	return err
 }
 
 func (m *etcdBackend) Delete(ctx context.Context, mapping *Mapping) error {
-	return m.etcdClient.Delete(ctx, mappingToKey(mapping))
+	key, err := m.mappingToKey(mapping)
+	if err != nil {
+		return err
+	}
+	return m.etcdClient.Delete(ctx, key)
 }
 
-func reconstructNameMappingFromKey(key string) *Mapping {
+func (m *etcdBackend) reconstructNameMappingFromKey(key string) *Mapping {
 	retMapping := &Mapping{}
-	trimmedKey := strings.TrimPrefix(key, MappingsPrefix)
+	trimmedKey := strings.TrimPrefix(key, m.mappingsPrefix)
 	splittedKey := strings.Split(trimmedKey, "/")
 	if splittedKey[0] == "v1" {
 		retMapping.GroupVersionKind = corev1.SchemeGroupVersion.WithKind(splittedKey[1])
@@ -168,11 +181,29 @@ func reconstructNameMappingFromKey(key string) *Mapping {
 	return retMapping
 }
 
-func mappingToKey(mapping *Mapping) string {
+func (m *etcdBackend) mappingToKey(mapping *Mapping) (string, error) {
+	if mapping == nil {
+		return "", fmt.Errorf("mapping must not be nil")
+	}
+	// Each logical key component must stay in its own path segment. In
+	// particular debug commands must never escape the selected tenant range.
+	parts := []string{mapping.Version, mapping.Kind, mapping.VirtualName.Name}
+	if mapping.Group != "" {
+		parts = append(parts, mapping.Group)
+	}
+	if mapping.VirtualName.Namespace != "" {
+		parts = append(parts, mapping.VirtualName.Namespace)
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "/\\\x00") {
+			return "", fmt.Errorf("mapping contains an invalid storage key component")
+		}
+	}
+
 	nameNamespace := mapping.VirtualName.Name
 	if mapping.VirtualName.Namespace != "" {
 		nameNamespace = mapping.VirtualName.Namespace + "/" + nameNamespace
 	}
 
-	return path.Join(MappingsPrefix, mapping.GroupVersion().String(), strings.ToLower(mapping.Kind), nameNamespace)
+	return path.Join(m.mappingsPrefix, mapping.GroupVersion().String(), strings.ToLower(mapping.Kind), nameNamespace), nil
 }
