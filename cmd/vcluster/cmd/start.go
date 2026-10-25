@@ -152,10 +152,18 @@ func StartInCluster(ctx context.Context, options *StartOptions) error {
 		return fmt.Errorf("start managers: %w", err)
 	}
 
-	// start proxy
-	err = setup.StartProxy(controllerCtx)
-	if err != nil {
-		return fmt.Errorf("start proxy: %w", err)
+	// A single-replica tenant must establish bidirectional cache baselines
+	// before exposing writes through its proxy. HA followers still need to
+	// serve while leader election blocks; handoff requires separate validation.
+	deferProxy := vConfig.ControlPlane.BackingStore.Etcd.External.StorePrefix != "" && vConfig.ControlPlane.StatefulSet.HighAvailability.Replicas <= 1
+	if !deferProxy {
+		if err := setup.StartProxy(controllerCtx); err != nil {
+			return fmt.Errorf("start proxy: %w", err)
+		}
+	} else {
+		// This hook runs after all syncers registered and primed their caches,
+		// before plugins are notified that this process became the leader.
+		controllerCtx.AcquiredLeaderHooks = append(controllerCtx.AcquiredLeaderHooks, func(ctx *synccontext.ControllerContext) error { return setup.StartProxy(ctx) })
 	}
 
 	// start konnectivity server
