@@ -109,6 +109,9 @@ func (c *Client) Run(ctx context.Context, vConfig *config.VirtualClusterConfig) 
 	if vConfig == nil {
 		return fmt.Errorf("snapshot client requires vCluster config")
 	}
+	if err := vConfig.ValidateSnapshotStorageLayout(); err != nil {
+		return err
+	}
 
 	var err error
 	if vConfig.ControlPlane.Standalone.Enabled {
