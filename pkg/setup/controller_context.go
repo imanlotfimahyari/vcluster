@@ -407,6 +407,11 @@ func initControllerContext(
 		Config:   vClusterOptions,
 	}
 
+	layout, err := vClusterOptions.ResolveEtcdStorageLayout()
+	if err != nil {
+		return nil, err
+	}
+
 	etcdClient, err := etcd.NewFromConfig(ctx, vClusterOptions)
 	if err != nil {
 		return nil, fmt.Errorf("create etcd client: %w", err)
@@ -432,7 +437,7 @@ func initControllerContext(
 		ctx,
 		virtualManager.GetClient(),
 		localClient,
-		store.NewEtcdBackend(etcdClient),
+		store.NewEtcdBackend(etcdClient, layout.MappingsPrefix),
 		verify.NewVerifyMapping(controllerContext.ToRegisterContext().ToSyncContext("verify-mapping")),
 	)
 	if err != nil {
