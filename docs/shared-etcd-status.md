@@ -17,9 +17,10 @@ tree; see [dependency provenance and deployment boundaries](shared-etcd-dependen
 No existing cluster, production image or runtime server was upgraded by this
 source/dependency change.
 
-The full native suite passed in **146.640 seconds**, including the new lease
-checks, three-member leader transfer/loss/restart, all migration/recovery CLI
-paths, both runtime restart cases and Helm upgrade checks. New authorization
+After the dependency update, the full native suite passed in **145.280 seconds**
+(the preceding external-server qualification took 146.640 seconds), including
+the lease checks, three-member leader transfer/loss/restart, all migration/recovery CLI
+paths, both runtime restart cases and Helm upgrade checks. The authorization
 tests distinguish protected nonempty leases from TTL-only metadata and empty
 leases. See [the lease qualification](shared-etcd-lease-authorization.md).
 
@@ -66,7 +67,7 @@ leases. See [the lease qualification](shared-etcd-lease-authorization.md).
 | New backend migration tests | Passed: lost copy response/resume, rollback, leases, source/foreign preservation, collateral revocation and credential-authentication ordering |
 | Final changed-package unit tests | Passed: archive digest pin, invalid access plans, runtime host barrier, marker-deletion interruption and configuration preservation |
 | Actual CLI backup, inspection and recovery with disposable host API | Passed; zero-replica controller status is seeded, no worker exists |
-| Formatting, shell syntax and `git diff --check` | Passed |
+| Own-source whitespace and shell syntax | Passed; canonical vendored dependency documentation retains upstream whitespace |
 | Repository custom lint via `just` | Unavailable: `just` and the custom lint binary are not installed |
 | Scheduled-Pod/CNI VM suite | Skipped; no complete result claimed |
 
