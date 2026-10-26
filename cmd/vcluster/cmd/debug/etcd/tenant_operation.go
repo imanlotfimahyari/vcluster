@@ -417,12 +417,11 @@ func (p *operation) begin(ctx context.Context, mode string) error {
 		if p.o.root == "" {
 			return errors.New("migration requires --store-prefix")
 		}
-		// Legacy overrides cannot be inferred safely, including server overrides.
-		for _, arg := range cfg.ControlPlane.Distro.K8S.APIServer.ExtraArgs {
-			flag, _, _ := strings.Cut(strings.ReplaceAll(strings.TrimLeft(arg, "-"), "_", "-"), "=")
-			if strings.HasPrefix(flag, "etcd-") {
-				return errors.New("legacy etcd API-server overrides are unsupported for migration")
-			}
+		// Consume only explicitly disabled global maintenance. Tenant mode
+		// derives these flags itself; storage/server overrides stay forbidden.
+		cfg.ControlPlane.Distro.K8S.APIServer.ExtraArgs, err = migrationAPIServerArgs(cfg.ControlPlane.Distro.K8S.APIServer.ExtraArgs)
+		if err != nil {
+			return err
 		}
 	} else if sourceLayout.RootPrefix == "" {
 		return errors.New("recovery requires an existing tenant root")
@@ -809,7 +808,66 @@ func (p *operation) targetConfig() ([]byte, error) {
 	if p.s.Mode == "recover" {
 		return slices.Clone(p.s.Config), nil
 	}
+	// Preserve the raw configuration (including unknown extensions), changing
+	// only maintenance options that the target tenant layout now owns.
+	current = all
+	for _, key := range []string{"controlPlane", "distro", "k8s", "apiServer"} {
+		next, ok := current[key].(map[string]interface{})
+		if !ok {
+			return yaml.Marshal(all)
+		}
+		current = next
+	}
+	if raw, ok := current["extraArgs"]; ok && raw != nil {
+		items, ok := raw.([]interface{})
+		if !ok {
+			return nil, errors.New("API-server extraArgs must be a list")
+		}
+		args := make([]string, 0, len(items))
+		for _, item := range items {
+			arg, ok := item.(string)
+			if !ok {
+				return nil, errors.New("API-server extraArgs must contain strings")
+			}
+			args = append(args, arg)
+		}
+		filtered, err := migrationAPIServerArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		current["extraArgs"] = filtered
+	}
 	return yaml.Marshal(all)
+}
+
+// Only zero-duration compaction and DB metric polling are compatible legacy
+// overrides. Normalize flags exactly as Kubernetes does, and consume separate
+// values without accidentally swallowing another flag.
+func migrationAPIServerArgs(args []string) ([]string, error) {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		flag, value, attached := strings.Cut(strings.ReplaceAll(strings.TrimLeft(arg, "-"), "_", "-"), "=")
+		if !strings.HasPrefix(flag, "etcd-") {
+			out = append(out, arg)
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") || (flag != "etcd-compaction-interval" && flag != "etcd-db-metric-poll-interval") {
+			return nil, errors.New("legacy etcd API-server overrides are unsupported for migration")
+		}
+		if !attached {
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return nil, errors.New("legacy etcd maintenance must be explicitly disabled")
+			}
+			i++
+			value = args[i]
+		}
+		duration, err := time.ParseDuration(value)
+		if err != nil || duration != 0 {
+			return nil, errors.New("legacy etcd maintenance must be explicitly disabled")
+		}
+	}
+	return out, nil
 }
 func (p *operation) cutover(ctx context.Context) error {
 	cfg, err := p.host.CoreV1().Secrets(p.s.Namespace).Get(ctx, "vc-config-"+p.s.Name, metav1.GetOptions{})

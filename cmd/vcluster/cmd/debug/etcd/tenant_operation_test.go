@@ -2,6 +2,7 @@ package etcd
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,5 +72,62 @@ func TestTargetConfigPreservesOtherValues(t *testing.T) {
 	target, err := p.targetConfig()
 	if err != nil || !strings.Contains(string(target), "custom: retained") || !strings.Contains(string(target), "storePrefix: /tenants/test") {
 		t.Fatal("configuration lost values", err)
+	}
+}
+
+// Existing scoped legacy deployments disable global maintenance explicitly.
+// Tenant roots manage the same settings, so cutover must consume those zero
+// settings instead of carrying reserved overrides into the target config.
+func TestTargetConfigConsumesDisabledMaintenance(t *testing.T) {
+	original := []byte("custom: retained\ncontrolPlane:\n  distro:\n    k8s:\n      apiServer:\n        extraArgs:\n        - --secure-port=7443\n        - --etcd-compaction-interval=0\n        - --etcd_db_metric_poll_interval\n        - 0s\n  backingStore:\n    etcd:\n      external:\n        endpoint: example.invalid:2379\n")
+	p := &operation{s: operationState{Mode: "migrate", Target: tenantbackup.Ownership{Root: "/tenants/test/"}, Config: original}}
+	out, err := p.targetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "etcd-compaction") || strings.Contains(string(out), "etcd_db_metric") || !strings.Contains(string(out), "--secure-port=7443") || !strings.Contains(string(out), "custom: retained") {
+		t.Fatal("migration did not consume disabled maintenance while preserving unrelated options")
+	}
+	p.s.Mode = "recover"
+	out, err = p.targetConfig()
+	if err != nil || string(out) != string(original) {
+		t.Fatal("recovery must preserve its configuration exactly", err)
+	}
+}
+
+func TestMigrationMaintenanceArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+		bad  bool
+	}{
+		{name: "absent", args: []string{"--secure-port=7443"}, want: []string{"--secure-port=7443"}},
+		{name: "disabled aliases", args: []string{"--secure-port", "7443", "-etcd_compaction_interval=0s", "--etcd-db-metric-poll-interval", "0"}, want: []string{"--secure-port", "7443"}},
+		{name: "nonzero", args: []string{"--etcd-compaction-interval=1s"}, bad: true},
+		{name: "negative", args: []string{"--etcd-compaction-interval=-1s"}, bad: true},
+		{name: "missing", args: []string{"--etcd-compaction-interval"}, bad: true},
+		{name: "next flag", args: []string{"--etcd-compaction-interval", "--etcd-prefix=/other"}, bad: true},
+		{name: "prefix", args: []string{"--etcd_prefix=/other"}, bad: true},
+		{name: "server", args: []string{"--etcd-servers=other:2379"}, bad: true},
+		{name: "unknown", args: []string{"--etcd-unknown=0"}, bad: true},
+		{name: "later override", args: []string{"--etcd-compaction-interval=0", "--etcd-compaction-interval=1m"}, bad: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := migrationAPIServerArgs(tc.args)
+			if (err != nil) != tc.bad {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !tc.bad && !slices.Equal(got, tc.want) {
+				t.Fatalf("filtered options: %v", got)
+			}
+		})
+	}
+}
+
+func TestTargetConfigPreservesNullExtraArgs(t *testing.T) {
+	p := &operation{s: operationState{Mode: "migrate", Target: tenantbackup.Ownership{Root: "/tenants/test/"}, Config: []byte("controlPlane:\n  distro:\n    k8s:\n      apiServer:\n        extraArgs: null\n")}}
+	if _, err := p.targetConfig(); err != nil {
+		t.Fatal(err)
 	}
 }
