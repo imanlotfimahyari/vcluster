@@ -226,6 +226,12 @@ func stoppedTenant(ctx context.Context, host kubernetes.Interface, namespace, na
 			return errors.New("host layout marker differs from archive")
 		}
 	}
+	return stoppedWorkload(ctx, host, namespace, name)
+}
+
+var errWorkloadActive = errors.New("control-plane workload is not quiescent")
+
+func stoppedWorkload(ctx context.Context, host kubernetes.Interface, namespace, name string) error {
 	sets, err := host.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -243,7 +249,7 @@ func stoppedTenant(ctx context.Context, host kubernetes.Interface, namespace, na
 		count++
 		owners[set.UID] = true
 		if set.UID == "" || set.Spec.Replicas == nil || *set.Spec.Replicas != 0 || set.Status.ObservedGeneration < set.Generation || set.Status.Replicas != 0 || set.Status.CurrentReplicas != 0 || set.Status.ReadyReplicas != 0 || set.Status.UpdatedReplicas != 0 || set.Status.AvailableReplicas != 0 {
-			return errors.New("StatefulSet must have observed zero replicas")
+			return fmt.Errorf("%w: StatefulSet must have observed zero replicas", errWorkloadActive)
 		}
 	}
 	for _, deployment := range deployments.Items {
@@ -253,7 +259,7 @@ func stoppedTenant(ctx context.Context, host kubernetes.Interface, namespace, na
 		count++
 		owners[deployment.UID] = true
 		if deployment.UID == "" || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 0 || deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.Replicas != 0 || deployment.Status.ReadyReplicas != 0 || deployment.Status.AvailableReplicas != 0 || deployment.Status.UpdatedReplicas != 0 || deployment.Status.UnavailableReplicas != 0 || (deployment.Status.TerminatingReplicas != nil && *deployment.Status.TerminatingReplicas != 0) {
-			return errors.New("Deployment must have observed zero replicas")
+			return fmt.Errorf("%w: Deployment must have observed zero replicas", errWorkloadActive)
 		}
 	}
 	if count != 1 {
@@ -275,7 +281,7 @@ func stoppedTenant(ctx context.Context, host kubernetes.Interface, namespace, na
 		}
 		owners[set.UID] = true
 		if set.Spec.Replicas == nil || *set.Spec.Replicas != 0 || set.Status.ObservedGeneration < set.Generation || set.Status.Replicas != 0 || set.Status.ReadyReplicas != 0 || set.Status.AvailableReplicas != 0 || (set.Status.TerminatingReplicas != nil && *set.Status.TerminatingReplicas != 0) {
-			return errors.New("owned ReplicaSet has not observed zero replicas")
+			return fmt.Errorf("%w: owned ReplicaSet has not observed zero replicas", errWorkloadActive)
 		}
 	}
 	pods, err := host.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
@@ -290,7 +296,7 @@ func stoppedTenant(ctx context.Context, host kubernetes.Interface, namespace, na
 			}
 		}
 		if owned || (pod.Labels["app"] == "vcluster" && pod.Labels["release"] == name) {
-			return errors.New("control-plane Pods remain, including terminating or orphaned Pods")
+			return fmt.Errorf("%w: control-plane Pods remain, including terminating or orphaned Pods", errWorkloadActive)
 		}
 	}
 	return nil
