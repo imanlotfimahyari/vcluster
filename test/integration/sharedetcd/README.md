@@ -124,8 +124,10 @@ terminates subprocess groups, including child API servers.
   separate acceptance tests.
 - Built-in global snapshot/restore remains blocked. Dedicated tenant backup,
   inspection and same-identity recovery are available as described in the
-  [recovery procedure](../../../docs/shared-etcd-recovery.md). Automatic
-  adoption/migration and older binary/chart rollback remain unsupported.
+  [recovery procedure](../../../docs/shared-etcd-recovery.md). Journaled
+  legacy migration and automated recovery are described in the
+  [operations procedure](../../../docs/shared-etcd-operations.md). Arbitrary
+  adoption/relocation and older binary/chart rollback remain unsupported.
 
 The harness script now builds the CLI and supplies `VCLUSTER_SHARED_ETCD_CLI` to
 exercise the real commands. Direct `go test` skips that CLI test unless the
@@ -136,3 +138,10 @@ CLI and assets variables and select
 Lease tests deliberately record stock etcd's unscoped keep-alive behavior: a
 retired identity can renew a known lease ID even when its KV writes are denied.
 This is a documented service isolation limit, not a claimed lease-expiry fence.
+
+The journaled-operation tests also exercise actual CLI migration, automated
+recovery, pre-cutover rollback, subsequent operations and credential rotation
+with a real disposable host API. Backend tests cover interrupted migration,
+legacy lease translation, preservation of source/foreign data and refusal of
+collateral permission revocation. The host workloads remain zero-replica
+fixtures; these tests do not substitute for worker/CNI/CSI acceptance.
