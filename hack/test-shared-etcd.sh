@@ -14,6 +14,12 @@ for test_binary in etcd kube-apiserver helm; do
   fi
 done
 
+etcd_version=$("${VCLUSTER_SHARED_ETCD_ASSETS}/etcd" --version)
+if [[ "$etcd_version" != *"etcd Version: 3.6.16"$'\n'* ]]; then
+  echo "The isolated shared-etcd baseline requires stock etcd 3.6.16" >&2
+  exit 1
+fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 build_directory=$(mktemp -d)
 trap 'rm -rf "$build_directory"' EXIT
