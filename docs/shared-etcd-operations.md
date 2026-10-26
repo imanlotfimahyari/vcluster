@@ -18,9 +18,13 @@ The first implementation supports a named single-replica StatefulSet or
 Deployment using managed K8s and external etcd. The etcd TLS files must come
 from one mutable dedicated Kubernetes Secret mounted directly in the `syncer`
 container. Projected/CSI/subPath mounts are refused. The configuration Secret
-must contain the deployed `config.yaml`. Custom legacy etcd API-server flags,
-root/admin tenant identities, HA and relocation of an existing tenant root are
-refused. Migration translates only `/registry/` to `<root>/registry/` and
+must contain the deployed `config.yaml`. Legacy etcd prefix/server overrides and nonzero maintenance options, root/admin
+tenant identities, HA and relocation of an existing tenant root are refused.
+Explicitly zero `etcd-compaction-interval` and `etcd-db-metric-poll-interval`
+options are accepted for scoped legacy deployments and consumed at cutover;
+tenant-root mode derives those disabled settings itself. Kubernetes underscore
+aliases and separate values are validated equivalently. The original settings
+remain in the journal for pre-cutover rollback. Migration translates only `/registry/` to `<root>/registry/` and
 `/vcluster/mappings/` to `<root>/mappings/`.
 
 Suspend GitOps, Helm reconciliations, autoscalers and competing administrators

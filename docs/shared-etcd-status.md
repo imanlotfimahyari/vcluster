@@ -63,6 +63,7 @@ leases. See [the lease qualification](shared-etcd-lease-authorization.md).
 | Tagged integration Go vet | Passed |
 | Recovered worker fixture: static CLI/test runner build and tagged vet | Passed |
 | Recovered worker fixture: full native suite on stock etcd 3.6.16 | Passed in 180.939 seconds, including scoped DNS identity and Service/PVC/Pod prerequisites |
+| Legacy migration: consume explicitly disabled compaction/DB metric polling | Failing regression reproduced; fixed unit suites and full native CLI suite passed in 179.099 seconds; prefix/server/nonzero overrides remain rejected |
 | Unit tests: config, tenantbackup, setup/config, mappings/store, synccontext, runtime config, CLI, snapshot and debug/etcd | Passed |
 | Native integration regression suite, real etcd 3.6.8 and Kubernetes API 1.36.0 | All functional cases passed in the 204.338-second run; Helm launch initially failed because its downloaded binary lacked execute permission |
 | Final actual CLI migration/recovery/rollback/subsequent-operation and Helm upgrade checks | Passed after correcting the test asset execute permission; tested final CLI build |
