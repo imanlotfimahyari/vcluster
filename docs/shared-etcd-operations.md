@@ -47,8 +47,10 @@ additional source/target writers with repeated `--retire-user`. Planning refuses
 unknown writers and relevant retired roles with permissions outside the managed
 ranges. It revokes **user-role memberships**, never shared role definitions or
 other users. Broad/multi-tenant roles must be split first. An already-connected
-old client loses its key-write access; host/process/node fencing and etcd's
-unscoped lease keep-alive limitation remain outside this guarantee.
+old client loses its key-write access; host/process/node fencing remains outside this guarantee. Lease renewal is
+qualified on stock 3.6.16 as described in the
+[lease authorization contract](shared-etcd-lease-authorization.md); empty leases
+and TTL-only metadata retain separate limits.
 
 Host access requires get/create/update/delete on operation Secrets and layout
 ConfigMaps, get/update on the existing configuration/TLS Secrets and workload,
@@ -147,7 +149,7 @@ there is no automatic credential or recovery-material garbage collection.
 
 ## Verification scope
 
-Native integration tests use authenticated etcd 3.6.8 and a disposable Kubernetes
+The current native integration baseline uses authenticated etcd 3.6.16 and a disposable Kubernetes
 API 1.36.0. They cover automated certificate/user/role provisioning, old-connection
 revocation, actual CLI migration/recovery/rollback, fixed-revision translation,
 interrupted copy/resume, lease grouping, source/foreign-tenant preservation and

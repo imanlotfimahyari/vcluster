@@ -6,6 +6,20 @@ same-cluster legacy migration and automated recovery preparation/cutover.
 The previously reported missing migration source was not assumed to exist;
 this workflow is a new implementation against the published baseline.
 
+## Current external-etcd baseline
+
+The isolated test server is now stock **etcd 3.6.16**, verified against upstream
+release checksums. The prior 3.6.8 observations below are historical evidence,
+not the current lease authorization contract. Vendored Go etcd modules remain
+3.6.8 and need a separate production dependency upgrade. No existing cluster,
+production image or runtime server was upgraded by this test-baseline change.
+
+The full native suite passed in **146.640 seconds**, including the new lease
+checks, three-member leader transfer/loss/restart, all migration/recovery CLI
+paths, both runtime restart cases and Helm upgrade checks. New authorization
+tests distinguish protected nonempty leases from TTL-only metadata and empty
+leases. See [the lease qualification](shared-etcd-lease-authorization.md).
+
 ## Implemented
 
 - External-etcd parent prefixes for Kubernetes registry and mappings, scoped
@@ -49,7 +63,7 @@ this workflow is a new implementation against the published baseline.
 | Repository custom lint via `just` | Unavailable: `just` and the custom lint binary are not installed |
 | Scheduled-Pod/CNI VM suite | Skipped; no complete result claimed |
 
-The native runs used the stock verified envtest API server, with the optional
+The current and preceding native runs used the stock verified envtest API server, with the optional
 patched-Status assertion disabled. The separate Kubernetes patch was retained
 but was **not rebuilt or revalidated in this session**. Native tests prove real
 process/API behavior, not a Helm-managed workload rollout on a worker cluster.
@@ -78,10 +92,10 @@ completion is forward-only. Native API fixtures have no host controller or worke
 
 Leased recovery explicitly restarts captured remaining TTL, subject to the etcd
 minimum duration, rather than preserving the old wall-clock deadline. It is
-bounded to 1,024 groups and seven days of captured remaining TTL. Stock etcd
-keep-alive calls are not key-range authorized: revoking key-write grants does
-not prevent renewal of a known lease ID. Fresh restore IDs do not solve that
-shared-service isolation limit. Archives also exclude volume contents, host
+bounded to 1,024 groups and seven days of captured remaining TTL. The old 3.6.8 renewal bypass is rejected on the qualified 3.6.16 server.
+TTL-only metadata and permanent empty-lease ownership remain separate boundaries;
+there is no claim of complete tenant isolation for every Lease API object.
+Archives also exclude volume contents, host
 resources and encryption/PKI keys.
 See the [recovery procedure](shared-etcd-recovery.md) for the exact supported
 contract and required operator steps.

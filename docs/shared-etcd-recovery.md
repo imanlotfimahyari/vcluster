@@ -76,12 +76,13 @@ seven days. After a successful restore, natural TTL expiry changes the data;
 completion confirmation may then report a data mismatch instead of confirming
 an exact archive match. It does not start another restore or mutate data.
 
-**Shared-etcd limit:** stock etcd lease keep-alive is not authorized by key
-ranges. Tests confirm that a retired identity with no tenant key-write grants
-can still renew a known lease ID. Key-write revocation therefore does not
-provide an adversarial expiry-time fence. Fresh restore IDs avoid reusing old
-IDs but do not make lease APIs tenant-isolated. Stronger isolation requires an
-additional lease-aware authorization boundary or separate etcd clusters.
+**Version-qualified lease enforcement:** the original unauthorized-renewal
+observation applied to the old 3.6.8 test server. The isolated stock baseline is
+now 3.6.16: a retired identity cannot renew a lease attached to keys it can no
+longer write, including on an existing stream. TTL-only metadata queries and
+empty-lease creator ownership remain separate limits. See the
+[lease qualification](shared-etcd-lease-authorization.md) for the exact tested
+contract; do not infer full lease ownership or global capacity isolation.
 
 ## Recovery prerequisites
 
