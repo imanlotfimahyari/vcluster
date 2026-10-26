@@ -6,15 +6,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/loft-sh/vcluster/pkg/config"
-	"github.com/loft-sh/vcluster/pkg/etcd"
-	"github.com/loft-sh/vcluster/pkg/mappings/store"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/ptr"
 )
 
 func startK3sHost(t *testing.T) (*kubernetes.Clientset, string) {
@@ -74,92 +71,158 @@ func TestScheduledPodsAndCNI(t *testing.T) {
 		t.Skip("requires the disposable offline VM runner")
 	}
 	host, hostKubeconfig := startK3sHost(t)
-	t.Log("offline Kubernetes worker is Ready; starting authenticated shared etcd")
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), integrationTimeout(10*time.Second))
+		defer cancel()
+		for _, ns := range []string{"worker-network-probe", "tenant-a", "tenant-b"} {
+			pods, err := host.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				continue
+			}
+			for _, p := range pods.Items {
+				t.Logf("worker Pod %s/%s phase=%s", ns, p.Name, p.Status.Phase)
+				for _, c := range p.Status.ContainerStatuses {
+					reason := ""
+					if c.State.Waiting != nil {
+						reason = c.State.Waiting.Reason
+					}
+					t.Logf("container %s ready=%t restarts=%d waiting=%s", c.Name, c.Ready, c.RestartCount, reason)
+				}
+			}
+		}
+	})
+	requireWorkerNetwork(t, host, hostKubeconfig)
+	t.Log("offline Kubernetes worker passed network preflight; starting authenticated shared etcd")
 	lab := newEtcdLab(t)
 	configure := func(c *config.VirtualClusterConfig) {
 		c.Sync.ToHost.Pods.Enabled = true
 		c.Sync.ToHost.Secrets.Enabled = true
 		c.Sync.ToHost.Services.Enabled = true
+		c.Sync.ToHost.PersistentVolumeClaims.Enabled = true
 	}
 	a := prepareTenant(t, lab, host, hostKubeconfig, "tenant-a", configure)
 	b := prepareTenant(t, lab, host, hostKubeconfig, "tenant-b", configure)
-	a.start(t)
-	b.start(t)
-	t.Log("both vCluster proxies are ready; creating identically named real Pods")
 	for _, tenant := range []*runtimeTenant{a, b} {
+		t.Logf("starting %s control plane", tenant.name)
+		tenant.start(t)
+	}
+	volumes := map[string]workerVolume{}
+	for i, tenant := range []*runtimeTenant{a, b} {
+		prepareWorkerDNS(t, host, tenant, int32(1053+i))
+		volumes[tenant.name] = prepareWorkerVolume(t, host, tenant)
 		for _, name := range []string{"server", "client"} {
 			command := []string{"/bin/busybox", "sleep", "3600"}
+			container := corev1.Container{Name: "busybox", Image: "docker.io/library/vcluster-test:local", ImagePullPolicy: corev1.PullNever}
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"app": name}}, Spec: corev1.PodSpec{DNSPolicy: corev1.DNSClusterFirst, AutomountServiceAccountToken: ptr.To(false)}}
 			if name == "server" {
-				command = []string{"/bin/busybox", "sh", "-c", "echo " + tenant.name + " > /www/index.html; exec /bin/busybox httpd -f -p 8080 -h /www"}
+				// Do not recreate the durable value on restart: a lost volume must fail.
+				command = []string{"/bin/busybox", "sh", "-c", "test -f /www/index.html || echo " + tenant.name + " > /www/index.html; exec /bin/busybox httpd -f -p 8080 -h /www"}
+				container.VolumeMounts = []corev1.VolumeMount{{Name: "data", MountPath: "/www"}}
+				pod.Spec.Volumes = []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data"}}}}
 			}
-			_, err := tenant.client.CoreV1().Pods("default").Create(t.Context(), &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"app": name}}, Spec: corev1.PodSpec{
-				DNSPolicy: corev1.DNSNone, DNSConfig: &corev1.PodDNSConfig{Nameservers: []string{"10.96.0.10"}},
-				Containers: []corev1.Container{{Name: "busybox", Image: "docker.io/library/vcluster-test:local", ImagePullPolicy: corev1.PullNever, Command: command}},
-			}}, metav1.CreateOptions{})
-			if err != nil {
+			container.Command = command
+			pod.Spec.Containers = []corev1.Container{container}
+			if _, err := tenant.client.CoreV1().Pods("default").Create(t.Context(), pod, metav1.CreateOptions{}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		_, err := tenant.client.CoreV1().Services("default").Create(t.Context(), &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "web"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "server"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080)}}}}, metav1.CreateOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
+		createWorkerService(t, tenant, "web")
+		t.Logf("%s application Pods created; waiting for real scheduling", tenant.name)
 		server := waitScheduledPod(t, tenant, "server")
 		_ = waitScheduledPod(t, tenant, "client")
 		if server.Status.PodIP == "" || server.Spec.NodeName == "" {
 			t.Fatal("virtual Pod lacks real scheduling/network status")
 		}
-		clientName := physicalPodName(t, tenant, "client")
-		for _, useService := range []bool{false, true} {
-			if err := wait.PollUntilContextTimeout(t.Context(), time.Second, integrationTimeout(30*time.Second), true, func(ctx context.Context) (bool, error) {
-				address := fmt.Sprintf("http://%s:8080", server.Status.PodIP)
-				if useService {
-					// The syncer recreates virtual Services with their physical IP.
-					// Fetch the current object instead of retaining the create reply.
-					service, err := tenant.client.CoreV1().Services("default").Get(ctx, "web", metav1.GetOptions{})
-					if err != nil {
-						return false, nil
-					}
-					address = "http://" + service.Spec.ClusterIP
-				}
-				callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-				defer cancel()
-				output, err := exec.CommandContext(callCtx, asset(t, "k3s"), "kubectl", "--kubeconfig="+hostKubeconfig, "exec", "-n", tenant.name, clientName, "--", "/bin/busybox", "wget", "-T", "5", "-qO-", address).CombinedOutput()
-				return err == nil && strings.TrimSpace(string(output)) == tenant.name, nil
-			}); err != nil {
-				t.Fatalf("%s CNI/service traffic failed: %v", tenant.name, err)
-			}
+		if output, err := workerExec(t.Context(), t, tenant, hostKubeconfig, "server", "/bin/busybox", "sh", "-c", `printf '%s' "$1" > /www/durable`, "fixture", tenant.name+"-durable"); err != nil {
+			t.Fatalf("write application volume: %v: %.400s", err, output)
 		}
-		t.Logf("%s Pods scheduled; Pod-IP and Service traffic passed", tenant.name)
+		awaitWorkerHTTP(t, tenant, hostKubeconfig, fmt.Sprintf("http://%s:8080", server.Status.PodIP), tenant.name)
+		awaitWorkerHTTP(t, tenant, hostKubeconfig, "http://"+workerServiceIP(t, host, tenant, "web"), tenant.name)
+		awaitWorkerHTTP(t, tenant, hostKubeconfig, "http://web.default.svc.cluster.local/durable", tenant.name+"-durable")
+		t.Logf("%s real Pods, Pod-IP, Service, tenant DNS and mounted PVC traffic passed", tenant.name)
 	}
-	// Restart one control plane while its real workloads and the other tenant
-	// remain running. Confirm that Pod status and a replacement still converge.
+	if volumes[a.name].physicalUID == volumes[b.name].physicalUID || volumes[a.name].volumeUID == volumes[b.name].volumeUID {
+		t.Fatal("identically named claims shared a physical claim/volume")
+	}
 	a.process.stop()
+	awaitWorkerHTTP(t, b, hostKubeconfig, "http://web.default.svc.cluster.local/durable", "tenant-b-durable")
+	t.Log("tenant B serves its own PVC data through DNS while tenant A is offline")
 	a.start(t)
-	old := waitScheduledPod(t, a, "client")
+	for _, name := range []string{"client", "server"} {
+		replaceWorkerPod(t, host, a, name)
+	}
+	createWorkerService(t, a, "after-restart")
+	awaitWorkerHTTP(t, a, hostKubeconfig, "http://after-restart.default.svc.cluster.local/durable", "tenant-a-durable")
+	awaitWorkerHTTP(t, b, hostKubeconfig, "http://web.default.svc.cluster.local/durable", "tenant-b-durable")
+	for _, tenant := range []*runtimeTenant{a, b} {
+		volumes[tenant.name].verify(t, host, tenant)
+	}
+	t.Log("control-plane restart, real Pod replacement, fresh DNS record and isolated PVC durability passed")
+}
+
+func createWorkerService(t *testing.T, tenant *runtimeTenant, name string) {
+	t.Helper()
+	if _, err := tenant.client.CoreV1().Services("default").Create(t.Context(), &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "server"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080)}}}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func workerServiceIP(t *testing.T, host *kubernetes.Clientset, tenant *runtimeTenant, name string) string {
+	t.Helper()
+	ref := awaitPhysicalObject(t, tenant, "Service", "default", name)
+	var address string
+	if err := wait.PollUntilContextTimeout(t.Context(), time.Second, integrationTimeout(time.Minute), true, func(ctx context.Context) (bool, error) {
+		physical, err := host.CoreV1().Services(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		virtual, err := tenant.client.CoreV1().Services("default").Get(ctx, name, metav1.GetOptions{})
+		if err != nil || virtual.Spec.ClusterIP == "" || virtual.Spec.ClusterIP != physical.Spec.ClusterIP {
+			return false, nil
+		}
+		address = virtual.Spec.ClusterIP
+		return true, nil
+	}); err != nil {
+		t.Fatal("Service addresses did not converge", err)
+	}
+	return address
+}
+
+func replaceWorkerPod(t *testing.T, host *kubernetes.Clientset, tenant *runtimeTenant, name string) {
+	t.Helper()
+	t.Logf("replacing %s/%s", tenant.name, name)
+	old := waitScheduledPod(t, tenant, name)
+	ref := awaitPhysicalObject(t, tenant, "Pod", "default", name)
+	oldPhysical, err := host.CoreV1().Pods(ref.Namespace).Get(t.Context(), ref.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	grace := int64(0)
-	if err := a.client.CoreV1().Pods("default").Delete(t.Context(), "client", metav1.DeleteOptions{GracePeriodSeconds: &grace}); err != nil {
+	if err := tenant.client.CoreV1().Pods("default").Delete(t.Context(), name, metav1.DeleteOptions{GracePeriodSeconds: &grace}); err != nil {
 		t.Fatal(err)
 	}
 	if err := wait.PollUntilContextTimeout(t.Context(), time.Second, integrationTimeout(time.Minute), true, func(ctx context.Context) (bool, error) {
-		_, err := a.client.CoreV1().Pods("default").Get(ctx, "client", metav1.GetOptions{})
+		_, err := tenant.client.CoreV1().Pods("default").Get(ctx, name, metav1.GetOptions{})
 		return kerrors.IsNotFound(err), nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	replacement := old.DeepCopy()
-	replacement.ObjectMeta = metav1.ObjectMeta{Name: "client"}
+	replacement.ObjectMeta = metav1.ObjectMeta{Name: name, Labels: old.Labels}
 	replacement.Status = corev1.PodStatus{}
 	replacement.Spec.NodeName = ""
-	if _, err := a.client.CoreV1().Pods("default").Create(t.Context(), replacement, metav1.CreateOptions{}); err != nil {
+	if _, err := tenant.client.CoreV1().Pods("default").Create(t.Context(), replacement, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	fresh := waitScheduledPod(t, a, "client")
-	if fresh.UID == old.UID {
-		t.Fatal("replacement retained the old UID")
+	fresh := waitScheduledPod(t, tenant, name)
+	ref = awaitPhysicalObject(t, tenant, "Pod", "default", name)
+	physical, err := host.CoreV1().Pods(ref.Namespace).Get(t.Context(), ref.Name, metav1.GetOptions{})
+	if err != nil || fresh.UID == old.UID || physical.UID == oldPhysical.UID {
+		t.Fatal("replacement did not create new virtual and physical Pod identities", err)
 	}
-	_ = waitScheduledPod(t, b, "server")
-	t.Log("control-plane restart and real Pod replacement passed; other tenant remained Ready")
 }
 
 func waitScheduledPod(t *testing.T, tenant *runtimeTenant, name string) *corev1.Pod {
@@ -184,28 +247,4 @@ func waitScheduledPod(t *testing.T, tenant *runtimeTenant, name string) *corev1.
 		t.Fatalf("%s/%s did not become Ready: %v", tenant.name, name, err)
 	}
 	return pod
-}
-
-func physicalPodName(t *testing.T, tenant *runtimeTenant, name string) string {
-	t.Helper()
-	wrapped, err := etcd.NewFromConfig(t.Context(), tenant.config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer wrapped.Close()
-	layout, err := tenant.config.ResolveEtcdStorageLayout()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mappings, err := store.NewEtcdBackend(wrapped, layout.MappingsPrefix).List(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, mapping := range mappings {
-		if mapping.VirtualName.Name == name && mapping.VirtualName.Namespace == "default" && strings.EqualFold(mapping.Kind, "Pod") {
-			return mapping.HostName.Name
-		}
-	}
-	t.Fatal("no physical Pod mapping")
-	return ""
 }

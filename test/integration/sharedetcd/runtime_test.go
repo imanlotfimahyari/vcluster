@@ -131,6 +131,7 @@ type runtimeTenant struct {
 	client                                    *kubernetes.Clientset
 	apiClient                                 *kubernetes.Clientset
 	process                                   *testProcess
+	host                                      *kubernetes.Clientset
 }
 
 func prepareTenant(t *testing.T, lab *etcdLab, host *kubernetes.Clientset, hostKubeconfig string, name string, configure ...func(*config.VirtualClusterConfig)) *runtimeTenant {
@@ -177,6 +178,14 @@ func prepareTenant(t *testing.T, lab *etcdLab, host *kubernetes.Clientset, hostK
 	for _, apply := range configure {
 		apply(cfg)
 	}
+	workloadAccount := ""
+	if cfg.Sync.ToHost.Pods.Enabled && cfg.ControlPlane.Advanced.WorkloadServiceAccount.Enabled {
+		workloadAccount = cfg.ControlPlane.Advanced.WorkloadServiceAccount.Name
+		if workloadAccount == "" {
+			workloadAccount = "vc-workload-" + name
+			cfg.ControlPlane.Advanced.WorkloadServiceAccount.Name = workloadAccount
+		}
+	}
 	configBytes, err := yaml.Marshal(cfg.Config)
 	if err != nil {
 		t.Fatal(err)
@@ -186,6 +195,13 @@ func prepareTenant(t *testing.T, lab *etcdLab, host *kubernetes.Clientset, hostK
 	ctx := t.Context()
 	if _, err := host.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	if workloadAccount != "" {
+		// This account is normally rendered by Helm; no permissions or token.
+		noMount := false
+		if _, err := host.CoreV1().ServiceAccounts(name).Create(ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: workloadAccount}, AutomountServiceAccountToken: &noMount}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := host.CoreV1().Secrets(name).Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "vc-config-" + name}, Data: map[string][]byte{"config.yaml": configBytes}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
@@ -201,7 +217,7 @@ func prepareTenant(t *testing.T, lab *etcdLab, host *kubernetes.Clientset, hostK
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &runtimeTenant{name: name, configPath: configPath, dataDir: dataDir, hostKubeconfig: hostKubeconfig, config: cfg, client: proxyClient, apiClient: client}
+	return &runtimeTenant{name: name, configPath: configPath, dataDir: dataDir, hostKubeconfig: hostKubeconfig, config: cfg, client: proxyClient, apiClient: client, host: host}
 }
 
 func (tenant *runtimeTenant) run(t *testing.T, action string) *testProcess {
@@ -211,7 +227,7 @@ func (tenant *runtimeTenant) run(t *testing.T, action string) *testProcess {
 		t.Fatal(err)
 	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "GOMAXPROCS=2", "KUBECONFIG=" + tenant.hostKubeconfig, "NAMESPACE=" + tenant.name, "POD_NAMESPACE=" + tenant.name, "POD_NAME=" + tenant.name + "-0", "VCLUSTER_NAME=" + tenant.name, "VCLUSTER_STANDALONE=false",
-		"VCLUSTER_SHARED_ETCD_ASSETS=" + os.Getenv("VCLUSTER_SHARED_ETCD_ASSETS"), "VCLUSTER_SHARED_ETCD_CHILD_CONFIG=" + tenant.configPath, "VCLUSTER_SHARED_ETCD_CHILD_DATA=" + tenant.dataDir, "VCLUSTER_SHARED_ETCD_CHILD_ACTION=" + action}
+		"VCLUSTER_SHARED_ETCD_VM=" + os.Getenv("VCLUSTER_SHARED_ETCD_VM"), "VCLUSTER_SHARED_ETCD_ASSETS=" + os.Getenv("VCLUSTER_SHARED_ETCD_ASSETS"), "VCLUSTER_SHARED_ETCD_CHILD_CONFIG=" + tenant.configPath, "VCLUSTER_SHARED_ETCD_CHILD_DATA=" + tenant.dataDir, "VCLUSTER_SHARED_ETCD_CHILD_ACTION=" + action}
 	return startProcess(t, tenant.name+"-"+action, env, executable, "-test.run=^TestVClusterRuntimeChild$", "-test.v")
 }
 

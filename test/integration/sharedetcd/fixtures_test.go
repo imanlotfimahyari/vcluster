@@ -202,7 +202,7 @@ func rawEtcdClient(t *testing.T, endpoint string, certs *etcd.Certificates) *cli
 	if !pool.AppendCertsFromPEM(caPEM) {
 		t.Fatal("invalid test CA")
 	}
-	client, err := clientv3.New(clientv3.Config{Endpoints: []string{endpoint}, TLS: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{leaf}}, DialTimeout: 3 * time.Second, Logger: zap.NewNop()})
+	client, err := clientv3.New(clientv3.Config{Endpoints: []string{endpoint}, TLS: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{leaf}}, DialTimeout: integrationTimeout(3 * time.Second), Logger: zap.NewNop()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func newEtcdLab(t *testing.T) *etcdLab {
 		if err := process.check(); err != nil {
 			return false, err
 		}
-		callCtx, cancel := context.WithTimeout(ctx, time.Second)
+		callCtx, cancel := context.WithTimeout(ctx, integrationTimeout(time.Second))
 		defer cancel()
 		_, err := admin.Status(callCtx, endpoint)
 		return err == nil, nil
@@ -246,7 +246,7 @@ func newEtcdLab(t *testing.T) *etcdLab {
 
 func initializeEtcdLab(t *testing.T, ca *testCA, endpoint string, admin *clientv3.Client, root *etcd.Certificates) *etcdLab {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), integrationTimeout(10*time.Second))
 	defer cancel()
 	if _, err := admin.UserAddWithOptions(ctx, "root", "", &clientv3.UserAddOptions{NoPassword: true}); err != nil {
 		t.Fatal(err)

@@ -39,6 +39,8 @@ invocation if Helm is absent; the script requires it to avoid that gap.
 | `TestLeaseAuthorizationBoundaries` | Own/foreign/read-only renewal; TTL metadata versus attached keys; global listing, revoke and Put/nested-Txn lease attachment |
 | `TestLeaseRevocationOnExistingStream` | Revocation on the same already-open bidi stream, new-request denial and explicit regrant |
 | `TestLeaseAuthorizationDuringPermissionChanges` | Concurrent renewal requests overlapping permission removal and regrant |
+| `TestWorkerDNSIdentity` | Real tenant-local DNS read identity; Secret/write denial and foreign-token rejection with TLS verification |
+| `TestWorkerServiceAndClaimTranslation` | Real translated Service/PVC/Pod identity and required host workload ServiceAccount; no fake Ready/Bound status |
 | `TestEmptyLeaseHasNoCreatorOwnership` | Explicit upstream empty-lease semantics without claiming persistent tenant ownership |
 | `TestLeaseAuthorizationAcrossLeaderChangesAndRestarts` | Three mTLS peers; leader/follower renewal, leader transfer/loss, stream revocation and full-cluster restart |
 
@@ -55,12 +57,12 @@ recorded in [the checkpoint status](../../../docs/shared-etcd-status.md).
 
 ## Offline scheduled-Pod/CNI suite
 
-`TestScheduledPodsAndCNI` runs only in the disposable VM. It boots an actual
-single-node K3s host with containerd and Flannel host-gw, starts two tenant
-runtimes against restricted identities on shared etcd, creates identically named
-server/client Pods, waits for real scheduling/status, checks Pod-IP and Service
-HTTP traffic, restarts one control plane, and replaces a Pod while checking the
-other tenant remains Ready.
+`TestScheduledPodsAndCNI` checks real Pods, CNI, tenant DNS and node-local PVC
+traffic in two tenants. Tenant B must serve its own data while A is offline.
+After A restarts, both application Pods must acquire new virtual/physical UIDs,
+a fresh Service must resolve through DNS, and the original volume data and
+claim/binding identities must survive. The ordinary host Pod/DNS preflight runs
+before tenant startup. See [fixture details and limits](../../../docs/shared-etcd-worker-acceptance.md).
 
 Prepare a static test binary and an offline BusyBox workload image:
 
@@ -89,13 +91,10 @@ virtio block, ext4, veth/bridge and required netfilter modules. Assets also incl
 `k3s` and `k3s-images.tar.zst` from the same release. Use the patched API server as
 `assets/kube-apiserver` to exercise the Status fallback.
 
-Execution checkpoint: the initial guest exposed two fixture requirements: an
-ext4 root for kubelet filesystem inspection and nftables kernel modules for
-kube-proxy. Both are implemented in the runner. The latest run reached a Ready
-Kubernetes worker and started the authenticated-etcd phase, but a complete
-Pod/CNI test pass was not obtained. Scheduled-Pod, traffic, and replacement
-assertions therefore remain unverified; they must pass before this checkpoint
-can be considered covered.
+The image generator requires a static **Linux amd64** BusyBox executable and
+records that platform explicitly so containerd imports and unpacks the image.
+Raw guest logs are mode 0600 and may contain disposable credentials; do not
+publish them. Actual verified outcomes appear in [the status document](../../../docs/shared-etcd-status.md).
 
 ## Verified assets
 
@@ -118,14 +117,16 @@ terminates subprocess groups, including child API servers.
 - Runtime paths/ports are remapped per process. A plugin adapter delegates to
   actual v1/v2 managers, changing only the legacy listener to a dynamic port.
 - Virtual controller managers, schedulers, and CoreDNS are disabled. Fixtures
-  seed default ServiceAccounts. In the VM, the host scheduler schedules the
-  translated Pods; virtual DNS is not exercised.
+  seed default ServiceAccounts. In the VM, the host scheduler schedules translated Pods, and real per-tenant
+  host-network CoreDNS resolvers use tenant-local read-only API credentials.
 - The native host API has no worker/controller manager. Helm tests exercise
   live release/configuration changes, not an actual chart-managed Pod rollout.
 - The VM uses one node and one CNI configuration. It does not cover cross-node
-  routing, other CNIs, NetworkPolicy, PVC/CSI, drains, or rolling upgrades.
+  routing, other CNIs, NetworkPolicy, CSI/dynamic provisioning, drains, or rolling
+  upgrades. The VM uses actual statically bound node-local PVCs.
 - Fixture syncers have host administrator credentials. Production host RBAC,
-  adversarial process isolation, and credential rotation are not validated.
+  adversarial process isolation, and worker-backed credential rotation are not
+  validated by the process fixture.
 - HA leader handoff, mutations made while syncers are offline, performance,
   etcd quorum/compaction/quota failures, and the supported-version matrix need
   separate acceptance tests.
@@ -147,7 +148,8 @@ existing streams. It covers leader/follower endpoints, leader transfer/loss,
 full-cluster restart, TTL/list/revoke/Put/nested transactions and overlapping
 auth changes. TTL-only metadata and empty-lease creator ownership remain explicit
 limits. See the [exact qualification](../../../docs/shared-etcd-lease-authorization.md).
-The external test executable is upgraded; vendored libraries remain separate.
+The external test executable and all six vendored etcd modules are aligned to
+3.6.16. Production server/image rollouts remain separate.
 
 The journaled-operation tests also exercise actual CLI migration, automated
 recovery, pre-cutover rollback, subsequent operations and credential rotation
