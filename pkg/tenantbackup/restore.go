@@ -20,6 +20,9 @@ import (
 // process retaining valid etcd credentials. Administrators must serialize auth
 // changes throughout recovery; etcd auth and KV transactions are not atomic.
 type RestoreOptions struct {
+	// ExpectedSHA pins a coordinator journal to the internally verified spool.
+	ExpectedSHA     string
+	migration       *MigrationGuard
 	Admin           clientv3.Auth
 	RecoveryUser    string
 	RetiredUsers    []string
@@ -164,6 +167,9 @@ func Restore(ctx context.Context, kv clientv3.KV, archive string, opts RestoreOp
 	if err != nil {
 		return nil, err
 	}
+	if opts.ExpectedSHA != "" && summary.SHA256 != opts.ExpectedSHA {
+		return nil, errors.New("archive digest differs from operation journal")
+	}
 	plan, err := archiveLeasePlan(spool)
 	if err != nil {
 		return nil, err
@@ -175,6 +181,9 @@ func Restore(ctx context.Context, kv clientv3.KV, archive string, opts RestoreOp
 	check := func() error {
 		if err := opts.CheckStopped(ctx); err != nil {
 			return fmt.Errorf("workload is not stopped: %w", err)
+		}
+		if opts.migration != nil {
+			return AuditAccess(ctx, opts.Admin, opts.migration.Access)
 		}
 		return AuditWriters(ctx, opts.Admin, root, opts.RecoveryUser, opts.RetiredUsers)
 	}
@@ -223,7 +232,7 @@ func Restore(ctx context.Context, kv clientv3.KV, archive string, opts RestoreOp
 		if err := validateLeaseBindings(plan, completed.Leases, true); err != nil {
 			return nil, err
 		}
-		if err := verifyRestoredData(ctx, kv, summary, false, completed.Leases); err != nil {
+		if err := verifyRestoredData(ctx, kv, summary, false, completed.Leases, opts.migration); err != nil {
 			return nil, err
 		}
 		return summary, nil
@@ -246,8 +255,13 @@ func Restore(ctx context.Context, kv clientv3.KV, archive string, opts RestoreOp
 		conditions := []clientv3.Cmp{
 			clientv3.Compare(clientv3.Value(root+ClaimSuffix), "=", claimValue),
 			clientv3.Compare(clientv3.ModRevision(stateKey), "=", token),
-			clientv3.Compare(clientv3.CreateRevision(root+MigrationSuffix), "=", 0),
+
 			clientv3.Compare(clientv3.CreateRevision(root+FenceSuffix), "=", 0),
+		}
+		if opts.migration == nil {
+			conditions = append(conditions, clientv3.Compare(clientv3.CreateRevision(root+MigrationSuffix), "=", 0))
+		} else {
+			conditions = append(conditions, clientv3.Compare(clientv3.Value(root+MigrationSuffix), "=", opts.migration.Token), clientv3.Compare(clientv3.Value(LegacyMigrationKey), "=", opts.migration.Token))
 		}
 		if next == nil {
 			ops = append(ops, clientv3.OpDelete(stateKey))
@@ -357,7 +371,7 @@ func Restore(ctx context.Context, kv clientv3.KV, archive string, opts RestoreOp
 			return nil, err
 		}
 	}
-	if err := verifyRestoredData(ctx, kv, summary, true, state.Leases); err != nil {
+	if err := verifyRestoredData(ctx, kv, summary, true, state.Leases, opts.migration); err != nil {
 		return nil, err
 	}
 	completed := state
@@ -369,7 +383,7 @@ func Restore(ctx context.Context, kv clientv3.KV, archive string, opts RestoreOp
 	return summary, nil
 }
 
-func verifyRestoredData(ctx context.Context, kv clientv3.KV, summary *Summary, pending bool, bindings map[string]leaseBinding) error {
+func verifyRestoredData(ctx context.Context, kv clientv3.KV, summary *Summary, pending bool, bindings map[string]leaseBinding, migration ...*MigrationGuard) error {
 	type originalLease struct{ source, ttl int64 }
 	byDestination := map[int64]originalLease{}
 	for source, binding := range bindings {
@@ -394,6 +408,9 @@ func verifyRestoredData(ctx context.Context, kv clientv3.KV, summary *Summary, p
 		}
 		for _, item := range page.Kvs {
 			key := strings.TrimPrefix(string(item.Key), root)
+			if key == MigrationSuffix && len(migration) > 0 && migration[0] != nil && string(item.Value) == migration[0].Token {
+				continue
+			}
 			if key == ClaimSuffix || key == RestoreReceiptSuffix || (key == RestoreSuffix && pending) {
 				continue
 			}

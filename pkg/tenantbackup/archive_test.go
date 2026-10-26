@@ -171,3 +171,15 @@ func TestArchiveLeaseMetadataContract(t *testing.T) {
 		t.Fatal("version 1 accepted lease metadata")
 	}
 }
+
+func TestRestorePinsCoordinatorDigestBeforeHostOrEtcd(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "archive.gz")
+	if err := os.WriteFile(filename, compressed(archiveBytes(testHeader(), nil)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := Restore(t.Context(), nil, filename, RestoreOptions{ExpectedSHA: strings.Repeat("0", 64), CheckStopped: func(context.Context) error { called = true; return nil }})
+	if err == nil || !strings.Contains(err.Error(), "digest differs") || called {
+		t.Fatalf("archive journal pin not enforced before side effects: called=%v err=%v", called, err)
+	}
+}
