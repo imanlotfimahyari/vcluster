@@ -6,7 +6,8 @@ caller's kubeconfig or contact an existing cluster. Telemetry is disabled.
 
 ## Native process suite
 
-Provide verified `etcd`, `kube-apiserver`, and `helm` executables:
+Provide verified `etcd` **3.6.16**, `kube-apiserver`, and `helm` executables.
+The harness and fixtures reject a different etcd version:
 
 ```sh
 export VCLUSTER_SHARED_ETCD_ASSETS=/absolute/path/to/test-assets
@@ -35,6 +36,11 @@ invocation if Helm is absent; the script requires it to avoid that gap.
 | `TestTenantLeasedBackup` | Lease-group metadata, explicit TTL-policy gate, fresh IDs, lost copy response, expired lease recreation, replay without another range clear |
 | `TestRestoredTenantLeaseExpiresAfterSuccess` | Restored leased values actually expire while persistent values remain |
 | `TestTenantBackupRefusesForeignSharedLease` | Attached-key authorization refuses a lease shared across tenant roots |
+| `TestLeaseAuthorizationBoundaries` | Own/foreign/read-only renewal; TTL metadata versus attached keys; global listing, revoke and Put/nested-Txn lease attachment |
+| `TestLeaseRevocationOnExistingStream` | Revocation on the same already-open bidi stream, new-request denial and explicit regrant |
+| `TestLeaseAuthorizationDuringPermissionChanges` | Concurrent renewal requests overlapping permission removal and regrant |
+| `TestEmptyLeaseHasNoCreatorOwnership` | Explicit upstream empty-lease semantics without claiming persistent tenant ownership |
+| `TestLeaseAuthorizationAcrossLeaderChangesAndRestarts` | Three mTLS peers; leader/follower renewal, leader transfer/loss, stream revocation and full-cluster restart |
 
 Repeat the startup regression:
 
@@ -43,8 +49,9 @@ go test -mod=vendor -tags=integration -timeout=4m -count=3 \
   -run '^TestWritesDuringControllerStartup$' -v ./test/integration/sharedetcd
 ```
 
-The native suite passed, including Helm and the patched Kubernetes fallback.
-The stricter immediate-startup-update test passed three consecutive runs.
+Earlier runs exercised the patched Kubernetes fallback and repeated the startup
+regression. The latest status and current image/worker validation limits are
+recorded in [the checkpoint status](../../../docs/shared-etcd-status.md).
 
 ## Offline scheduled-Pod/CNI suite
 
@@ -94,7 +101,7 @@ can be considered covered.
 
 | Asset | Official source | Download SHA-256 |
 | --- | --- | --- |
-| etcd 3.6.8 Linux amd64 archive | [etcd release](https://github.com/etcd-io/etcd/releases/tag/v3.6.8) | `cf9cfe91a4856cb90eed9c99e6aee4b708db2c7888b88a6f116281f04b0ea693` |
+| etcd 3.6.16 Linux amd64 archive | [etcd release](https://github.com/etcd-io/etcd/releases/tag/v3.6.16) | `c8c0d96d8292ef085deabbf735e9561d3d396768e4d606df005aa25964f21911` |
 | envtest 1.36.0 Linux amd64 archive | [controller-tools release](https://github.com/kubernetes-sigs/controller-tools/releases/tag/envtest-v1.36.0) | `d84f910bcefa3f6ab0205a49a7255672150c73b14bca3c36ac627db65040edf0` |
 | Helm 3.22.0 Linux amd64 archive | [Helm distribution](https://get.helm.sh/helm-v3.22.0-linux-amd64.tar.gz) | `1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb` |
 | K3s v1.36.0+k3s1 Linux amd64 executable | [K3s release](https://github.com/k3s-io/k3s/releases/tag/v1.36.0%2Bk3s1) | `efa953454c8f7bf8d9d35c2dad2a76c9bdaac6860d60361629a3a2719009876b` |
@@ -135,9 +142,12 @@ variable names an executable. To run only the recovery tests, provide both the
 CLI and assets variables and select
 `-run '^(TestTenant(Backup|Recovery|Archive|Leased)|TestRestoredTenantLease)'`.
 
-Lease tests deliberately record stock etcd's unscoped keep-alive behavior: a
-retired identity can renew a known lease ID even when its KV writes are denied.
-This is a documented service isolation limit, not a claimed lease-expiry fence.
+The stock 3.6.16 suite rejects foreign/read-only renewal and revoked writers on
+existing streams. It covers leader/follower endpoints, leader transfer/loss,
+full-cluster restart, TTL/list/revoke/Put/nested transactions and overlapping
+auth changes. TTL-only metadata and empty-lease creator ownership remain explicit
+limits. See the [exact qualification](../../../docs/shared-etcd-lease-authorization.md).
+The external test executable is upgraded; vendored libraries remain separate.
 
 The journaled-operation tests also exercise actual CLI migration, automated
 recovery, pre-cutover rollback, subsequent operations and credential rotation

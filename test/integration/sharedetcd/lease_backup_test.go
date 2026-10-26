@@ -82,11 +82,10 @@ func TestTenantLeasedBackup(t *testing.T) {
 	if interruptedLease == lease.ID || interruptedLease == 0 {
 		t.Fatal("restore reused the source lease")
 	}
-	// Stock etcd lease keep-alive is not range-authorized. This deliberately
-	// records the shared-service limit; revoked KV writes are checked separately.
-	if _, err = old.KeepAliveOnce(t.Context(), interruptedLease); err != nil {
-		t.Fatalf("stock lease behavior changed; revisit the documented limit: %v", err)
-	}
+	// A retired writer must not renew recovery leases on the patched stock
+	// baseline, including when it knows the new lease ID.
+	_, err = old.KeepAliveOnce(t.Context(), interruptedLease)
+	assertPermissionDenied(t, err)
 	_, err = old.Put(t.Context(), owner.Root+"registry/stale", "denied")
 	assertPermissionDenied(t, err)
 	// Expiring an interrupted attempt's lease removes some committed values.

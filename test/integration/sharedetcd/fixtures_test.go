@@ -219,6 +219,7 @@ type etcdLab struct {
 
 func newEtcdLab(t *testing.T) *etcdLab {
 	t.Helper()
+	requireLeaseTestVersion(t)
 	binary := asset(t, "etcd")
 	ca := newTestCA(t)
 	server, root := ca.identity(t, "server", true), ca.identity(t, "root", false)
@@ -240,6 +241,11 @@ func newEtcdLab(t *testing.T) *etcdLab {
 	}); err != nil {
 		t.Fatalf("etcd did not become ready: %v", err)
 	}
+	return initializeEtcdLab(t, ca, endpoint, admin, root)
+}
+
+func initializeEtcdLab(t *testing.T, ca *testCA, endpoint string, admin *clientv3.Client, root *etcd.Certificates) *etcdLab {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if _, err := admin.UserAddWithOptions(ctx, "root", "", &clientv3.UserAddOptions{NoPassword: true}); err != nil {
