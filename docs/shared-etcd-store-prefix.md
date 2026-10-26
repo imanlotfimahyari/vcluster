@@ -68,8 +68,8 @@ require explicit recovery or migration.
 
 The marker survives uninstall. Reinstalling under a replacement Secret UID is
 intentionally blocked; operators must reconcile the retained data and identity
-through an offline recovery/decommission procedure. No automatic adoption or
-migration command is provided. The claim catches exact root reuse and existing
+through an offline recovery/decommission procedure. The [journaled migration command](shared-etcd-operations.md) supports the
+same-cluster legacy layout; arbitrary adoption and relocation remain unsupported. The claim catches exact root reuse and existing
 nested data; it is **not** a global allocator and cannot exclude every future
 nested-root collision. A trusted provisioner must allocate disjoint roots.
 The markers are configuration safeguards, not protection against an etcd/host
@@ -118,7 +118,7 @@ not installed in this environment. Base revision:
 | Area | What remains | Can the solution cover it? |
 | --- | --- | --- |
 | Tenant backup/restore and cloning | Dedicated backup/inspection and same-identity recovery are implemented; cloning and identity transformations remain | [Recovery workflow](shared-etcd-recovery.md): one revision, bounded archives, complete validation, stopped workloads, audited writer revocation, resumable checkpoints, content verification. Built-in snapshot/restore stays blocked. |
-| Existing-data migration and rollback | Explicit offline adoption/migration, validation, rollback boundary, older binaries/charts that bypass new guards | Yes, with dedicated commands and a supported version matrix. Current guards reject unsafe changes. |
+| Existing-data migration and rollback | Same-cluster legacy migration, resumable copying, guarded cutover and pre-cutover rollback are implemented. Older binary/chart rollback and arbitrary relocation remain unsupported. | [Journaled operations](shared-etcd-operations.md); real-cluster/version acceptance remains required. |
 | HA and offline edits | Leader handoff with multiple replicas; conflict semantics when both host and virtual objects change while the syncer is down | Requires additional design and fault tests. Baselines are in memory, not a persisted history of delivered changes. |
 | Root allocation and credentials | Globally disjoint roots, least-privilege provisioning, rotation/revocation, retained-root decommission, host RBAC | Yes, through trusted operator/provisioner workflows. Exact-root claims do not replace them. |
 | Broader cluster validation | Multi-node networking, other CNIs, virtual DNS, NetworkPolicy, PVC/CSI, drains, rolling upgrades, all resource kinds and supported Kubernetes versions | Testable, but outside the current harness coverage. |

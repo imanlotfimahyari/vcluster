@@ -3,8 +3,10 @@
 This experimental workflow restores an existing tenant on the **same external
 etcd cluster**, with the same root, configuration Secret UID, layout marker and
 endpoint. It supports the managed Kubernetes API server and the two data ranges
-`<root>/registry/` and `<root>/mappings/`. Legacy migration, cloning, replacement
-deployment identities and cross-cluster recovery remain unsupported.
+`<root>/registry/` and `<root>/mappings/`. Cloning, replacement deployment identities and cross-cluster recovery remain
+unsupported. For legacy migration and automated shutdown, credential issuance,
+writer retirement and cutover, see [journaled operations](shared-etcd-operations.md).
+The commands below describe the manually prepared restore path.
 
 ## Backup and inspection
 

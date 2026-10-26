@@ -1,9 +1,10 @@
-# Verified source checkpoint — 25 October 2026
+# Verified source checkpoint — 26 October 2026
 
-This file records what is present in this checkout and was checked in this
-session. Earlier completion descriptions for migration, automatic fencing and
-image packaging could not be recovered as source files and are not part of this
-checkpoint.
+This checkout resumes from published commit `498b3b08`, whose tree matches the
+previous verified isolation/backup/recovery implementation. It adds journaled
+same-cluster legacy migration and automated recovery preparation/cutover.
+The previously reported missing migration source was not assumed to exist;
+this workflow is a new implementation against the published baseline.
 
 ## Implemented
 
@@ -19,6 +20,15 @@ checkpoint.
   remains readable. Leased restore requires `--restart-lease-ttl`, grants fresh
   leases, renews them during copy and replays interrupted expired groups without
   repeating the destructive clear.
+- `tenant-migrate` and `tenant-recover`: durable host operation Secret, automatic
+  scale-down, local-CA client issuance, scoped etcd identity provisioning,
+  recorded user-role revocation, archive digest pinning, identity-preserving
+  configuration/TLS cutover and observed controller readiness. Migration retains
+  original data, reserves source/target atomically and supports pre-cutover
+  rollback. Completed journals can be archived for subsequent operations.
+- Refusal of unrelated permission revocation, unknown writers, changed host
+  identities/configuration/TLS/Pod templates, competing lifecycle barriers,
+  mismatched archives and post-cutover rollback. Issuer/admin keys stay local.
 - Rejection of Kubernetes underscore flag aliases that could bypass reserved
   etcd settings, with a reproduced failing regression before the fix.
 
@@ -30,30 +40,41 @@ checkpoint.
 | Go vet on `./cmd/... ./pkg/... ./e2e/...` | Passed |
 | Tagged integration Go vet | Passed |
 | Unit tests: config, tenantbackup, setup/config, mappings/store, synccontext, runtime config, CLI, snapshot and debug/etcd | Passed |
-| Full native integration suite, real etcd 3.6.8, Kubernetes API 1.36.0 and Helm 3.22.0 | Passed in 74.620 seconds, including leased CLI recovery |
-| Focused leased recovery tests | Passed in 9.597 seconds |
+| Native integration regression suite, real etcd 3.6.8 and Kubernetes API 1.36.0 | All functional cases passed in the 204.338-second run; Helm launch initially failed because its downloaded binary lacked execute permission |
+| Final actual CLI migration/recovery/rollback/subsequent-operation and Helm upgrade checks | Passed after correcting the test asset execute permission; tested final CLI build |
+| New backend migration tests | Passed: lost copy response/resume, rollback, leases, source/foreign preservation, collateral revocation and credential-authentication ordering |
+| Final changed-package unit tests | Passed: archive digest pin, invalid access plans, runtime host barrier, marker-deletion interruption and configuration preservation |
 | Actual CLI backup, inspection and recovery with disposable host API | Passed; zero-replica controller status is seeded, no worker exists |
 | Formatting, shell syntax and `git diff --check` | Passed |
 | Repository custom lint via `just` | Unavailable: `just` and the custom lint binary are not installed |
 | Scheduled-Pod/CNI VM suite | Skipped; no complete result claimed |
 
-The full native run used the stock verified envtest API server, with the optional
+The native runs used the stock verified envtest API server, with the optional
 patched-Status assertion disabled. The separate Kubernetes patch was retained
 but was **not rebuilt or revalidated in this session**. Native tests prove real
 process/API behavior, not a Helm-managed workload rollout on a worker cluster.
 
 ## Required next work
 
-1. Legacy-to-tenant migration using the verified archive/recovery foundation,
-   including a host cutover journal, identity preservation and rollback tests.
-   No migration or clone command currently exists.
-2. Automated writer provisioning/rotation if desired. Current recovery checks
-   existing permissions but deliberately does not change etcd users or roles.
-3. Build and distribute the matching patched Kubernetes/vCluster images; then
-   validate two real Helm deployments, normal host RBAC, Pods, CNI/DNS, upgrades
-   and workload recovery on the operator's test cluster.
-4. HA, cross-cluster recovery, cloning, retained-root decommission, failure/load
-   testing and broader version/storage/network acceptance.
+1. Real-cluster acceptance for the new migration/recovery workflows, including
+   a controller-managed scale-down/restart, actual Helm values reconciliation,
+   normal operator/runtime RBAC, Pods, CNI/DNS, volumes and application recovery.
+2. Build/distribute the matching patched Kubernetes/vCluster images and verify
+   the denied-Status fallback in those images.
+3. External issuer integrations and ongoing certificate renewal; the automated
+   operation currently supports an authorized local signing CA and direct
+   dedicated Secret mounts. HA and broad/multi-tenant writer grants are refused.
+4. Volume/application/external-resource backup providers and protected recovery
+   bundles for host configuration, PKI and encryption-provider dependencies.
+5. HA, cross-cluster recovery, cloning, arbitrary root relocation, retained-root
+   decommission, failure/load testing and broader version/storage/network
+   acceptance.
+
+The [journaled operations procedure](shared-etcd-operations.md) defines the
+supported shutdown, authorization, lease, cutover, resume and rollback contract.
+Trusted administrators/reconcilers must serialize changes; the workflow is not
+an atomic transaction spanning Kubernetes, PKI and etcd auth. Once cutover starts,
+completion is forward-only. Native API fixtures have no host controller or worker.
 
 Leased recovery explicitly restarts captured remaining TTL, subject to the etcd
 minimum duration, rather than preserving the old wall-clock deadline. It is
@@ -65,7 +86,9 @@ resources and encryption/PKI keys.
 See the [recovery procedure](shared-etcd-recovery.md) for the exact supported
 contract and required operator steps.
 
-All tests used disposable processes and generated identities. No existing
+The first focused new-workflow integration run passed in 40.825 seconds. The
+final CLI/Helm rerun verified the final build, including Pod-template/TLS drift
+guards. All tests used disposable processes and generated identities. No existing
 cluster was changed and no image was published. The source checkpoint is
 published through the browser workflow described below.
 
