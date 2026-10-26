@@ -10,9 +10,12 @@ this workflow is a new implementation against the published baseline.
 
 The isolated test server is now stock **etcd 3.6.16**, verified against upstream
 release checksums. The prior 3.6.8 observations below are historical evidence,
-not the current lease authorization contract. Vendored Go etcd modules remain
-3.6.8 and need a separate production dependency upgrade. No existing cluster,
-production image or runtime server was upgraded by this test-baseline change.
+not the current lease authorization contract. All six vendored etcd modules are
+now aligned to **3.6.16**, replacing the mixed 3.6.8 server/storage and 3.6.14
+client baseline. The required transitive updates are included in the vendor
+tree; see [dependency provenance and deployment boundaries](shared-etcd-dependencies.md).
+No existing cluster, production image or runtime server was upgraded by this
+source/dependency change.
 
 The full native suite passed in **146.640 seconds**, including the new lease
 checks, three-member leader transfer/loss/restart, all migration/recovery CLI
@@ -51,6 +54,10 @@ leases. See [the lease qualification](shared-etcd-lease-authorization.md).
 | Check | Result |
 | --- | --- |
 | CLI build, vendored dependencies, Go 1.27.3 | Passed |
+| Dependency upgrade: static Linux amd64 CLI build; binary module inspection | Passed; all six etcd modules report v3.6.16 |
+| Dependency provenance: public module checksum verification and canonical vendor comparison | Passed for all 23 upgraded module trees; other vendor dependencies preserved |
+| Dependency upgrade: build/vet and nine relevant package unit suites, including snapshot conversion/restore | Passed |
+| Dependency upgrade: full native suite with updated vendored CLI and stock etcd 3.6.16 | Passed in 145.280 seconds, including lease authorization, three-member failover/restart, migration/recovery, vCluster restarts and Helm upgrade |
 | Go vet on `./cmd/... ./pkg/... ./e2e/...` | Passed |
 | Tagged integration Go vet | Passed |
 | Unit tests: config, tenantbackup, setup/config, mappings/store, synccontext, runtime config, CLI, snapshot and debug/etcd | Passed |

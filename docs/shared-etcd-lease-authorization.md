@@ -8,10 +8,10 @@ against its release `SHA256SUMS`:
 
 The harness and process fixtures reject a different reported version. They do
 not download executables automatically or upgrade an existing cluster. The
-vendored Go etcd modules remain at 3.6.8; this checkpoint changes the external
-process used by the integration suite, not the embedded-server distribution or
-all library dependencies. Those dependencies still need a separately tested
-security update before production packaging.
+vendored Go etcd modules are now aligned to 3.6.16 in the separately verified
+[dependency update](shared-etcd-dependencies.md). Updating library source does
+not upgrade an existing external service or running deployment; production
+images and real-cluster acceptance remain separate release steps.
 
 The previous 3.6.8 test that expected a retired identity's keep-alive to succeed
 is replaced by a denial assertion. That older observation must not be described
