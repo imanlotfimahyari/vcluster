@@ -62,6 +62,9 @@ leases. See [the lease qualification](shared-etcd-lease-authorization.md).
 | Go vet on `./cmd/... ./pkg/... ./e2e/...` | Passed |
 | Tagged integration Go vet | Passed |
 | Recovered worker fixture: static CLI/test runner build and tagged vet | Passed |
+| Controller fixture: fresh static CLI/runner build and tagged vet | Passed |
+| Controller fixture: native regression suite on stock etcd 3.6.16 | Passed in 219.908 seconds; Helm executable restored to exact verified archive bytes after a truncated local copy was detected |
+| Real Deployment-managed migration and recovery VM | Passed in 1300.33 seconds: actual shutdown/Pod recreation, retired-writer denial, in-place TLS rotation, restored API data, foreign-root client progress, DNS/PVC traffic and both application-Pod replacements |
 | Recovered worker fixture: full native suite on stock etcd 3.6.16 | Passed in 180.939 seconds, including scoped DNS identity and Service/PVC/Pod prerequisites |
 | Legacy migration: consume explicitly disabled compaction/DB metric polling | Failing regression reproduced; fixed unit suites and full native CLI suite passed in 179.099 seconds; prefix/server/nonzero overrides remain rejected |
 | Unit tests: config, tenantbackup, setup/config, mappings/store, synccontext, runtime config, CLI, snapshot and debug/etcd | Passed |
@@ -83,17 +86,22 @@ The recovered worker fixture and Linux amd64 offline image fix are now qualified
 by a complete 597.20-second offline worker run and a fresh 180.939-second native
 suite. See [the worker acceptance contract](shared-etcd-worker-acceptance.md).
 This is a real single-node K3s/Flannel worker with static hostPath PVs and
-host-network tenant resolvers. vCluster runtimes are still process fixtures;
-controller-managed migration/recovery and production RBAC/CSI/image acceptance
-remain pending. Raw guest artifacts and generated credentials are not published.
+host-network tenant resolvers. The separate controller suite now runs a real Deployment Pod with the API
+server and syncer; migration and recovery both passed with actual controller
+shutdown/recreation and application-volume checks. It uses four emulated CPUs,
+7 GiB RAM, fixture host networking/hostPath mounts and host administrator access.
+Foreign-root progress in this focused suite uses an authenticated etcd client;
+the two-runtime worker suite separately covers another live API/workload.
+Production chart/RBAC/CSI/image acceptance remains pending. See
+[the controller acceptance contract](shared-etcd-controller-acceptance.md). Raw guest artifacts and generated credentials are not published.
 
 ## Required next work
 
-1. Real-cluster acceptance for the new migration/recovery workflows, including
-   a controller-managed scale-down/restart, actual Helm values reconciliation,
-   normal operator/runtime RBAC and application recovery. The separate process
-   worker gate now covers Pods, one CNI, tenant DNS and node-local PVC durability;
-   it does not establish controller-managed migration/recovery or CSI coverage.
+1. Production deployment acceptance using the actual chart/container images,
+   Helm/GitOps reconciliation and normal operator/runtime RBAC. The controller
+   fixture now covers real single-replica Deployment migration/recovery, API
+   restoration and retained node-local PVC data. It does not qualify CSI,
+   production image packaging or the virtual controller-manager/scheduler.
 2. Build/distribute the matching patched Kubernetes/vCluster images and verify
    the denied-Status fallback in those images.
 3. External issuer integrations and ongoing certificate renewal; the automated
@@ -109,7 +117,8 @@ The [journaled operations procedure](shared-etcd-operations.md) defines the
 supported shutdown, authorization, lease, cutover, resume and rollback contract.
 Trusted administrators/reconcilers must serialize changes; the workflow is not
 an atomic transaction spanning Kubernetes, PKI and etcd auth. Once cutover starts,
-completion is forward-only. Native API fixtures have no host controller or worker.
+completion is forward-only. Native API fixtures have no host controller or worker; the separate VM suite
+uses real K3s controllers and a worker.
 
 Leased recovery explicitly restarts captured remaining TTL, subject to the etcd
 minimum duration, rather than preserving the old wall-clock deadline. It is

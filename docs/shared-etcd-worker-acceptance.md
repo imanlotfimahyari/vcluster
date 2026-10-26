@@ -67,7 +67,7 @@ validate the chart-managed tenant CoreDNS Deployment or virtual controllers.
 Static node-local hostPath PVs validate actual binding/mount/data persistence;
 they do not qualify CSI, dynamic provisioning, cross-node failover or backups.
 
-The vCluster process fixtures use host administrator access. Controller-managed
-migration/recovery, normal production RBAC, Helm-managed runtime rollout,
+The vCluster process fixtures use host administrator access. The [controller-managed migration/recovery gate](shared-etcd-controller-acceptance.md)
+has now passed separately. Normal production RBAC, Helm-managed runtime rollout,
 patched Kubernetes/vCluster images, HA and load/fault testing remain separate
 gates. The [status document](shared-etcd-status.md) records actual completed runs.
