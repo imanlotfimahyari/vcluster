@@ -229,8 +229,10 @@ func waitScheduledPod(t *testing.T, tenant *runtimeTenant, name string) *corev1.
 	t.Helper()
 	var pod *corev1.Pod
 	if err := wait.PollUntilContextTimeout(t.Context(), time.Second, integrationTimeout(90*time.Second), true, func(ctx context.Context) (bool, error) {
-		if err := tenant.process.check(); err != nil {
-			return false, err
+		if tenant.process != nil {
+			if err := tenant.process.check(); err != nil {
+				return false, err
+			}
 		}
 		var err error
 		pod, err = tenant.client.CoreV1().Pods("default").Get(ctx, name, metav1.GetOptions{})

@@ -96,6 +96,12 @@ records that platform explicitly so containerd imports and unpacks the image.
 Raw guest logs are mode 0600 and may contain disposable credentials; do not
 publish them. Actual verified outcomes appear in [the status document](../../../docs/shared-etcd-status.md).
 
+The [controller-managed operation suite](../../../docs/shared-etcd-controller-acceptance.md)
+adds a runtime fixture image and the actual CLI. Select it with
+`--test-run='^TestWorkerControllerMigrationAndRecovery$'`, supply `--cli` and
+`--runtime-image`, and use `--cpus=4 --memory=7G` with a 1800-second wall-clock timeout. The default
+selection remains the worker/DNS/PVC suite.
+
 ## Verified assets
 
 | Asset | Official source | Download SHA-256 |
@@ -156,4 +162,6 @@ recovery, pre-cutover rollback, subsequent operations and credential rotation
 with a real disposable host API. Backend tests cover interrupted migration,
 legacy lease translation, preservation of source/foreign data and refusal of
 collateral permission revocation. The host workloads remain zero-replica
-fixtures; these tests do not substitute for worker/CNI/CSI acceptance.
+fixtures. The separate controller VM suite now tests actual Deployment shutdown,
+cutover and recovery with real API data and retained node-local volumes. CSI
+and production chart/RBAC acceptance remain separate gates.
