@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import select
+import shlex
 import stat
 import subprocess
 import tempfile
@@ -58,6 +59,10 @@ def main():
     for arg in ['qemu-root', 'kernel', 'busybox', 'modules', 'assets', 'runner', 'log']:
         parser.add_argument('--' + arg, type=Path, required=True)
     parser.add_argument('--memory', default='5G')
+    parser.add_argument('--cpus', type=int, choices=range(1, 9), default=2)
+    parser.add_argument('--test-run', default='^TestScheduledPodsAndCNI$')
+    parser.add_argument('--cli', type=Path)
+    parser.add_argument('--runtime-image', type=Path)
     parser.add_argument('--timeout', type=int, default=1800)
     args = parser.parse_args()
     names = ['virtio_pci', 'virtio_blk', 'ext4', 'dummy', 'overlay', 'bridge', 'br_netfilter', 'veth', 'vxlan',
@@ -117,12 +122,13 @@ export PATH=/bin:/binaries
 export VCLUSTER_SHARED_ETCD_ASSETS=/binaries
 export VCLUSTER_SHARED_ETCD_VM=1
 export GOMAXPROCS=2
+if [ -x /binaries/vcluster ]; then export VCLUSTER_SHARED_ETCD_CLI=/binaries/vcluster; fi
 echo SHARED_ETCD_VM_BEGIN
-/test-runner -test.v -test.timeout=25m -test.run '^TestScheduledPodsAndCNI$'
+/test-runner -test.v -test.timeout=35m -test.run __TEST_RUN__
 result=$?
 echo SHARED_ETCD_VM_EXIT=$result
 poweroff -f
-'''
+'''.replace('__TEST_RUN__', shlex.quote(args.test_run))
     modprobe = '''#!/bin/sh
 while [ "$#" -gt 0 ]; do
   case "$1" in --) shift; break;; -*) shift;; *) break;; esac
@@ -141,6 +147,10 @@ exit 1
         'var/lib/rancher/k3s/agent/images/system.tar.zst': args.assets / 'k3s-images.tar.zst',
         'var/lib/rancher/k3s/agent/images/workload.tar': args.assets / 'workload-image.tar',
     }
+    if args.cli:
+        files['binaries/vcluster'] = args.cli
+    if args.runtime_image:
+        files['var/lib/rancher/k3s/agent/images/runtime.tar'] = args.runtime_image
     directories = {'bin', 'sbin', 'binaries', 'dev', 'proc', 'sys', 'run', 'tmp', 'etc', 'modules', 'root'}
     for name in files:
         directories.update(str(p) for p in Path(name).parents if str(p) != '.')
@@ -174,7 +184,7 @@ exit 1
         subprocess.run(['mkfs.ext4', '-q', '-F', str(disk)], check=True)
         command = [str(args.qemu_root / 'usr/bin/qemu-system-x86_64'), '-nodefaults', '-no-user-config',
                    '-no-reboot', '-machine', 'pc,accel=tcg', '-cpu', 'max', '-m', args.memory,
-                   '-smp', '2', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-net', 'none',
+                   '-smp', str(args.cpus), '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-net', 'none',
                    '-drive', f'if=none,id=rootfs,file={disk},format=raw',
                    '-device', 'virtio-blk-pci,drive=rootfs',
                    '-L', str(args.qemu_root / 'usr/share/qemu'),
@@ -201,7 +211,7 @@ exit 1
                         pending = lines.pop()
                         for raw in lines:
                             line = raw.decode(errors='replace')
-                            if any(tag in line for tag in ['SHARED_ETCD_VM_', '=== RUN', '--- PASS', '--- FAIL', 'scheduled_test.go:', 'worker_fixtures_test.go:']):
+                            if any(tag in line for tag in ['SHARED_ETCD_VM_', '=== RUN', '--- PASS', '--- FAIL', 'scheduled_test.go:', 'worker_fixtures_test.go:', 'worker_operations_test.go:']):
                                 print(line, flush=True)
                             match = re.search(r'SHARED_ETCD_VM_EXIT=(\d+)', line)
                             if match:
@@ -217,7 +227,7 @@ exit 1
                 process.wait()
         if result != 0:
             raise SystemExit(f'guest test did not pass (result={result}); see {args.log}')
-        print('Isolated scheduled-Pod/CNI test passed', flush=True)
+        print('Isolated shared-etcd guest tests passed', flush=True)
 
 if __name__ == '__main__':
     main()
