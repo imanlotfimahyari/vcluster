@@ -21,6 +21,16 @@ if [[ "$etcd_version" != *"etcd Version: 3.6.16"$'\n'* ]]; then
 fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# Qualify the same libraries that vendored CLI/runtime builds will ship.
+# A matching external executable alone does not detect stale server code.
+for etcd_module in api/v3 client/pkg/v3 client/v3 etcdutl/v3 pkg/v3 server/v3; do
+  module_version=$(go list -mod=vendor -m -f '{{.Version}}' "go.etcd.io/etcd/${etcd_module}")
+  if [[ "$module_version" != "v3.6.16" ]]; then
+    echo "The shared-etcd dependency baseline requires ${etcd_module} v3.6.16, got ${module_version}" >&2
+    exit 1
+  fi
+done
+
 build_directory=$(mktemp -d)
 trap 'rm -rf "$build_directory"' EXIT
 export VCLUSTER_SHARED_ETCD_CLI="$build_directory/vcluster"
