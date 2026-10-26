@@ -67,7 +67,8 @@ def main():
              'ip6_tables', 'ip6table_filter', 'ip6table_mangle', 'ip6table_raw', 'ip6table_nat',
              'nf_conntrack_netlink', 'xt_conntrack', 'xt_tcpudp', 'xt_mark', 'xt_connmark',
              'xt_comment', 'xt_addrtype', 'xt_multiport', 'xt_statistic', 'xt_MASQUERADE',
-             'xt_REJECT', 'xt_set', 'ip_set_hash_ip', 'ip_set_hash_net', 'ip_set_hash_ipport']
+             'ipt_REJECT', 'ip6t_REJECT', 'xt_nat', 'xt_REDIRECT', 'xt_physdev', 'xt_NFLOG', 'xt_state', 'xt_limit',
+             'xt_set', 'ip_set_hash_ip', 'ip_set_hash_net', 'ip_set_hash_ipport']
     modules, visiting = {}, set()
     def add_module(name):
         if name in modules or name in visiting:
@@ -93,8 +94,9 @@ mount -t devtmpfs devtmpfs /dev
 for name in __MODULES__; do insmod /modules/$name.ko || exit 1; done
 mkdir -p /newroot
 mount -t ext4 /dev/vda /newroot || exit 1
-cp -a /bin /binaries /test-runner /var /etc /modules /root /guest-init /newroot/ || exit 1
+cp -a /bin /sbin /binaries /test-runner /var /etc /modules /root /guest-init /newroot/ || exit 1
 mkdir -p /newroot/proc /newroot/sys /newroot/dev /newroot/run /newroot/tmp
+chmod 1777 /newroot/tmp
 mount --move /proc /newroot/proc
 mount --move /sys /newroot/sys
 mount --move /dev /newroot/dev
@@ -122,6 +124,10 @@ echo SHARED_ETCD_VM_EXIT=$result
 poweroff -f
 '''
     modprobe = '''#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in --) shift; break;; -*) shift;; *) break;; esac
+done
+[ "$#" -gt 0 ] || exit 1
 name=$(echo "$1" | tr '-' '_')
 [ -d /sys/module/$name ] && exit 0
 [ -f /modules/$name.ko ] && exec insmod /modules/$name.ko
@@ -135,18 +141,20 @@ exit 1
         'var/lib/rancher/k3s/agent/images/system.tar.zst': args.assets / 'k3s-images.tar.zst',
         'var/lib/rancher/k3s/agent/images/workload.tar': args.assets / 'workload-image.tar',
     }
-    directories = {'bin', 'binaries', 'dev', 'proc', 'sys', 'run', 'tmp', 'etc', 'modules', 'root'}
+    directories = {'bin', 'sbin', 'binaries', 'dev', 'proc', 'sys', 'run', 'tmp', 'etc', 'modules', 'root'}
     for name in files:
         directories.update(str(p) for p in Path(name).parents if str(p) != '.')
     with tempfile.TemporaryDirectory(prefix='shared-etcd-vm-') as temporary:
         archive = Path(temporary) / 'lab.cpio.gz'
         with gzip.open(archive, 'wb', compresslevel=1) as out:
             for directory in sorted(directories, key=lambda s: (s.count('/'), s)):
-                entry(out, directory, stat.S_IFDIR | 0o755)
+                entry(out, directory, stat.S_IFDIR | (0o1777 if directory == 'tmp' else 0o755))
             for name, source in files.items():
                 entry(out, name, stat.S_IFREG | 0o755, source=source)
             entry(out, 'bin/sh', stat.S_IFLNK | 0o777, b'busybox')
             entry(out, 'bin/modprobe', stat.S_IFREG | 0o755, modprobe.encode())
+            entry(out, 'sbin/modprobe', stat.S_IFLNK | 0o777, b'../bin/modprobe')
+            entry(out, 'etc/hosts', stat.S_IFREG | 0o644, b'127.0.0.1 localhost\n192.0.2.1 shared-etcd-lab\n')
             entry(out, 'etc/passwd', stat.S_IFREG | 0o644, b'root:*:0:0::/root:/bin/sh\n')
             entry(out, 'etc/group', stat.S_IFREG | 0o644, b'root:*:0:\n')
             entry(out, 'etc/resolv.conf', stat.S_IFREG | 0o644, b'nameserver 192.0.2.254\n')
@@ -175,7 +183,10 @@ exit 1
                    '-append', 'console=ttyS0 rdinit=/init panic=-1 loglevel=3 cgroup_no_v1=all']
         args.log.parent.mkdir(parents=True, exist_ok=True)
         started, result, pending = time.monotonic(), None, b''
-        with args.log.open('wb') as log:
+        # Guest logs can include disposable K3s join credentials.
+        log_fd = os.open(args.log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(log_fd, 0o600)
+        with os.fdopen(log_fd, 'wb') as log:
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
             try:
                 while process.poll() is None:
@@ -190,7 +201,7 @@ exit 1
                         pending = lines.pop()
                         for raw in lines:
                             line = raw.decode(errors='replace')
-                            if any(tag in line for tag in ['SHARED_ETCD_VM_', '=== RUN', '--- PASS', '--- FAIL', 'scheduled_test.go:']):
+                            if any(tag in line for tag in ['SHARED_ETCD_VM_', '=== RUN', '--- PASS', '--- FAIL', 'scheduled_test.go:', 'worker_fixtures_test.go:']):
                                 print(line, flush=True)
                             match = re.search(r'SHARED_ETCD_VM_EXIT=(\d+)', line)
                             if match:
