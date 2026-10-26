@@ -44,6 +44,7 @@ func TestJournaledMigrationAndRecoveryCLI(t *testing.T) {
 			if mode != "recover" {
 				writer = legacyWriter(t, lab)
 				cfg.ControlPlane.BackingStore.Etcd.External.StorePrefix = ""
+				cfg.ControlPlane.Distro.K8S.APIServer.ExtraArgs = []string{"--etcd-compaction-interval=0", "--etcd_db_metric_poll_interval", "0s"}
 				key = "/registry/test/value"
 			}
 			deployed := lab.certs[name]
