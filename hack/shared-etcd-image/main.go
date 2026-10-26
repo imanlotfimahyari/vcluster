@@ -50,6 +50,17 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// Containerd must be able to match the manifest to the offline guest.
+	// empty.Image otherwise leaves these fields blank and skips unpacking.
+	platform, err := image.ConfigFile()
+	if err != nil {
+		panic(err)
+	}
+	platform.OS, platform.Architecture = "linux", "amd64"
+	image, err = mutate.ConfigFile(image, platform)
+	if err != nil {
+		panic(err)
+	}
 	ref, err := name.NewTag("docker.io/library/vcluster-test:local")
 	if err != nil {
 		panic(err)
