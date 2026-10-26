@@ -61,6 +61,8 @@ leases. See [the lease qualification](shared-etcd-lease-authorization.md).
 | Dependency upgrade: full native suite with updated vendored CLI and stock etcd 3.6.16 | Passed in 145.280 seconds, including lease authorization, three-member failover/restart, migration/recovery, vCluster restarts and Helm upgrade |
 | Go vet on `./cmd/... ./pkg/... ./e2e/...` | Passed |
 | Tagged integration Go vet | Passed |
+| Recovered worker fixture: static CLI/test runner build and tagged vet | Passed |
+| Recovered worker fixture: full native suite on stock etcd 3.6.16 | Passed in 180.939 seconds, including scoped DNS identity and Service/PVC/Pod prerequisites |
 | Unit tests: config, tenantbackup, setup/config, mappings/store, synccontext, runtime config, CLI, snapshot and debug/etcd | Passed |
 | Native integration regression suite, real etcd 3.6.8 and Kubernetes API 1.36.0 | All functional cases passed in the 204.338-second run; Helm launch initially failed because its downloaded binary lacked execute permission |
 | Final actual CLI migration/recovery/rollback/subsequent-operation and Helm upgrade checks | Passed after correcting the test asset execute permission; tested final CLI build |
@@ -69,18 +71,28 @@ leases. See [the lease qualification](shared-etcd-lease-authorization.md).
 | Actual CLI backup, inspection and recovery with disposable host API | Passed; zero-replica controller status is seeded, no worker exists |
 | Own-source whitespace and shell syntax | Passed; canonical vendored dependency documentation retains upstream whitespace |
 | Repository custom lint via `just` | Unavailable: `just` and the custom lint binary are not installed |
-| Scheduled-Pod/CNI VM suite | Skipped; no complete result claimed |
+| Scheduled-Pod/CNI/DNS/PVC VM suite | Passed in 597.20 seconds: two real tenants, direct/Service/DNS traffic, distinct bound/mounted PVCs, B traffic while A is offline, A restart, both Pod replacements, fresh DNS and retained volume data/identities |
 
 The current and preceding native runs used the stock verified envtest API server, with the optional
 patched-Status assertion disabled. The separate Kubernetes patch was retained
 but was **not rebuilt or revalidated in this session**. Native tests prove real
 process/API behavior, not a Helm-managed workload rollout on a worker cluster.
 
+The recovered worker fixture and Linux amd64 offline image fix are now qualified
+by a complete 597.20-second offline worker run and a fresh 180.939-second native
+suite. See [the worker acceptance contract](shared-etcd-worker-acceptance.md).
+This is a real single-node K3s/Flannel worker with static hostPath PVs and
+host-network tenant resolvers. vCluster runtimes are still process fixtures;
+controller-managed migration/recovery and production RBAC/CSI/image acceptance
+remain pending. Raw guest artifacts and generated credentials are not published.
+
 ## Required next work
 
 1. Real-cluster acceptance for the new migration/recovery workflows, including
    a controller-managed scale-down/restart, actual Helm values reconciliation,
-   normal operator/runtime RBAC, Pods, CNI/DNS, volumes and application recovery.
+   normal operator/runtime RBAC and application recovery. The separate process
+   worker gate now covers Pods, one CNI, tenant DNS and node-local PVC durability;
+   it does not establish controller-managed migration/recovery or CSI coverage.
 2. Build/distribute the matching patched Kubernetes/vCluster images and verify
    the denied-Status fallback in those images.
 3. External issuer integrations and ongoing certificate renewal; the automated
