@@ -72,3 +72,20 @@ func TestStorageLayoutRejectsUnmarkedExistingDeployment(t *testing.T) {
 		t.Fatalf("existing deployment was silently adopted: %v", err)
 	}
 }
+
+func TestHostOperationBlocksLegacyStartup(t *testing.T) {
+	for _, phase := range []string{"prepare", "reserve", "copy", "verified", "cutover", "rollback", "unknown", "starting", "complete", "rolledback"} {
+		t.Run(phase, func(t *testing.T) {
+			c := legacyLayoutConfig()
+			data := []byte(`{"version":1,"Phase":"` + phase + `"}`)
+			if _, err := c.HostClient.CoreV1().Secrets("test").Create(t.Context(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "vc-etcd-operation-test"}, Data: map[string][]byte{"operation.json": data}}, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			err := EnsureStorageLayout(t.Context(), c)
+			allowed := phase == "starting" || phase == "complete" || phase == "rolledback"
+			if (err == nil) != allowed {
+				t.Fatalf("phase=%s err=%v", phase, err)
+			}
+		})
+	}
+}

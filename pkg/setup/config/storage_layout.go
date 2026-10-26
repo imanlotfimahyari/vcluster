@@ -48,6 +48,18 @@ func validateStorageLayoutMarker(existing, wanted map[string]string) error {
 // writes. The host marker catches edits through Helm or configuration Secrets;
 // the etcd claim rejects another deployment using the exact same tenant root.
 func EnsureStorageLayout(ctx context.Context, vConfig *config.VirtualClusterConfig) error {
+	operation, opErr := vConfig.HostClient.CoreV1().Secrets(vConfig.HostNamespace).Get(ctx, "vc-etcd-operation-"+vConfig.Name, metav1.GetOptions{})
+	if opErr == nil {
+		var state struct {
+			Version int `json:"version"`
+			Phase   string
+		}
+		if json.Unmarshal(operation.Data["operation.json"], &state) != nil || state.Version != 1 || (state.Phase != "complete" && state.Phase != "rolledback" && state.Phase != "starting") {
+			return fmt.Errorf("a host etcd operation blocks runtime startup; resume the operator workflow")
+		}
+	} else if !kerrors.IsNotFound(opErr) {
+		return fmt.Errorf("read etcd operation barrier: %w", opErr)
+	}
 	secret, err := vConfig.HostClient.CoreV1().Secrets(vConfig.HostNamespace).Get(ctx, "vc-config-"+vConfig.Name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("read deployment identity: %w", err)
